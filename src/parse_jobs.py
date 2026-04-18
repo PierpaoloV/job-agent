@@ -25,6 +25,13 @@ def _parse_linkedin_email(body: str) -> list[dict]:
     jobs = []
     seen_urls = set()
 
+    # Debug: show all hrefs containing 'linkedin' to understand email structure
+    all_links = [a["href"] for a in soup.find_all("a", href=True)]
+    li_links = [h for h in all_links if "linkedin" in h.lower()]
+    print(f"[DEBUG] Total <a> tags: {len(all_links)}, LinkedIn hrefs: {len(li_links)}")
+    for h in li_links[:10]:
+        print(f"[DEBUG] href: {h[:120]}")
+
     # Find all <a> tags linking to LinkedIn job pages
     for a in soup.find_all("a", href=True):
         href = a["href"]
@@ -108,6 +115,7 @@ def parse_emails(emails: list[dict]) -> list[dict]:
     for email in emails:
         sender = email.get("from", "").lower()
         body = email.get("body", "")
+        print(f"[DEBUG] Email from: {sender[:80]} | body length: {len(body)}")
         if "linkedin" in sender:
             jobs = _parse_linkedin_email(body)
         elif "indeed" in sender:
