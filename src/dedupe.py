@@ -30,14 +30,18 @@ def _conn():
     return conn
 
 
+def _key_of(job: dict) -> str:
+    return job.get("dedup_key") or job.get("url", "")
+
+
 def filter_new(jobs: list[dict]) -> list[dict]:
     conn = _conn()
     new_jobs = []
     for job in jobs:
-        url = job.get("url", "")
-        if not url:
+        key = _key_of(job)
+        if not key:
             continue
-        row = conn.execute("SELECT url FROM seen WHERE url = ?", (url,)).fetchone()
+        row = conn.execute("SELECT url FROM seen WHERE url = ?", (key,)).fetchone()
         if not row:
             new_jobs.append(job)
     conn.close()
@@ -49,12 +53,12 @@ def mark_seen(jobs: list[dict]):
     conn = _conn()
     now = datetime.now().isoformat()
     for job in jobs:
-        url = job.get("url", "")
-        if not url:
+        key = _key_of(job)
+        if not key:
             continue
         conn.execute(
             "INSERT OR IGNORE INTO seen (url, title, company, source, first_seen, score) VALUES (?,?,?,?,?,?)",
-            (url, job.get("title", ""), job.get("company", ""), job.get("source", ""), now, job.get("score"))
+            (key, job.get("title", ""), job.get("company", ""), job.get("source", ""), now, job.get("score"))
         )
     conn.commit()
     conn.close()
