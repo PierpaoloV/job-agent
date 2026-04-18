@@ -30,40 +30,37 @@ def _canonicalize_linkedin_url(href: str) -> str:
 
 def _parse_linkedin_email(body: str) -> list[dict]:
     soup = BeautifulSoup(body, "html.parser")
-    jobs = []
-    seen_urls = set()
 
-    matching = [a for a in soup.find_all("a", href=True) if "/jobs/view/" in a["href"]]
-    print(f"[DEBUG] _parse_linkedin_email: {len(matching)} <a> tags match /jobs/view/")
-
-    # Find all <a> tags linking to LinkedIn job view pages
-    # (URLs in emails use /comm/jobs/view/ for tracking; normalize to canonical form)
+    # Group all <a> tags by canonical URL — the same job has multiple anchors
+    # (image wrapper, title, "View job" button); we want the one with real text
+    url_to_anchors: dict[str, list] = {}
     for a in soup.find_all("a", href=True):
-        href = a["href"]
-        if "/jobs/view/" not in href:
+        if "/jobs/view/" not in a["href"]:
             continue
-        url = _canonicalize_linkedin_url(href)
-        if url in seen_urls:
-            continue
-        seen_urls.add(url)
+        url = _canonicalize_linkedin_url(a["href"])
+        url_to_anchors.setdefault(url, []).append(a)
 
-        title = a.get_text(strip=True)
-        print(f"[DEBUG] url={url} title={title!r}")
-
-        # Walk siblings/parent for company and location text
-        company, location = "", ""
-        parent = a.find_parent()
-        if parent:
-            siblings = list(parent.stripped_strings)
-            # title is usually first string; company and location follow
-            filtered = [s for s in siblings if s != title and len(s) > 1]
-            if filtered:
-                company = filtered[0]
-            if len(filtered) > 1:
-                location = filtered[1]
-
+    jobs = []
+    for url, anchors in url_to_anchors.items():
+        # Pick the anchor with longest non-empty text (usually the title link)
+        best = max(anchors, key=lambda a: len(a.get_text(strip=True)))
+        title = best.get_text(strip=True)
         if not title:
             continue
+
+        # Walk up to a job-card-like ancestor and collect text segments
+        company, location = "", ""
+        ancestor = best
+        for _ in range(4):
+            if ancestor.parent is None:
+                break
+            ancestor = ancestor.parent
+        if ancestor:
+            segments = [s for s in ancestor.stripped_strings if s != title and len(s) > 1]
+            if segments:
+                company = segments[0]
+            if len(segments) > 1:
+                location = segments[1]
 
         jobs.append({
             "title": title,
