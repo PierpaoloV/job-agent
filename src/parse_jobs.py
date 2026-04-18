@@ -21,25 +21,45 @@ def _clean_url(url: str) -> str:
 
 
 def _parse_linkedin_email(body: str) -> list[dict]:
-    text = _strip_html(body)
+    soup = BeautifulSoup(body, "html.parser")
     jobs = []
-    # LinkedIn alert format: job title followed by company and location
-    blocks = re.split(r'\n{2,}', text)
-    for block in blocks:
-        lines = [l.strip() for l in block.split('\n') if l.strip()]
-        if len(lines) < 2:
+    seen_urls = set()
+
+    # Find all <a> tags linking to LinkedIn job pages
+    for a in soup.find_all("a", href=True):
+        href = a["href"]
+        if "linkedin.com/jobs" not in href:
             continue
-        urls = _extract_urls(block)
-        job_url = next((u for u in urls if 'linkedin.com/jobs' in u), None)
-        if not job_url:
+        url = _clean_url(href)
+        if url in seen_urls:
             continue
+        seen_urls.add(url)
+
+        title = a.get_text(strip=True)
+
+        # Walk siblings/parent for company and location text
+        company, location = "", ""
+        parent = a.find_parent()
+        if parent:
+            siblings = list(parent.stripped_strings)
+            # title is usually first string; company and location follow
+            filtered = [s for s in siblings if s != title and len(s) > 1]
+            if filtered:
+                company = filtered[0]
+            if len(filtered) > 1:
+                location = filtered[1]
+
+        if not title:
+            continue
+
         jobs.append({
-            "title": lines[0],
-            "company": lines[1] if len(lines) > 1 else "",
-            "location": lines[2] if len(lines) > 2 else "",
-            "url": _clean_url(job_url),
+            "title": title,
+            "company": company,
+            "location": location,
+            "url": url,
             "source": "LinkedIn",
         })
+
     return jobs
 
 
