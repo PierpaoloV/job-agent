@@ -20,24 +20,26 @@ def _clean_url(url: str) -> str:
     return url
 
 
+def _canonicalize_linkedin_url(href: str) -> str:
+    """Extract the numeric job ID and return the canonical public URL."""
+    m = re.search(r'/jobs/view/(\d+)', href)
+    if m:
+        return f"https://www.linkedin.com/jobs/view/{m.group(1)}"
+    return _clean_url(href)
+
+
 def _parse_linkedin_email(body: str) -> list[dict]:
     soup = BeautifulSoup(body, "html.parser")
     jobs = []
     seen_urls = set()
 
-    # Debug: show all hrefs containing 'linkedin' to understand email structure
-    all_links = [a["href"] for a in soup.find_all("a", href=True)]
-    li_links = [h for h in all_links if "linkedin" in h.lower()]
-    print(f"[DEBUG] Total <a> tags: {len(all_links)}, LinkedIn hrefs: {len(li_links)}")
-    for h in li_links[:10]:
-        print(f"[DEBUG] href: {h[:120]}")
-
-    # Find all <a> tags linking to LinkedIn job pages
+    # Find all <a> tags linking to LinkedIn job view pages
+    # (URLs in emails use /comm/jobs/view/ for tracking; normalize to canonical form)
     for a in soup.find_all("a", href=True):
         href = a["href"]
-        if "linkedin.com/jobs" not in href:
+        if "/jobs/view/" not in href:
             continue
-        url = _clean_url(href)
+        url = _canonicalize_linkedin_url(href)
         if url in seen_urls:
             continue
         seen_urls.add(url)
@@ -115,7 +117,6 @@ def parse_emails(emails: list[dict]) -> list[dict]:
     for email in emails:
         sender = email.get("from", "").lower()
         body = email.get("body", "")
-        print(f"[DEBUG] Email from: {sender[:80]} | body length: {len(body)}")
         if "linkedin" in sender:
             jobs = _parse_linkedin_email(body)
         elif "indeed" in sender:
