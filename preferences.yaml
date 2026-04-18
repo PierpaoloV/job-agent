@@ -1,0 +1,70 @@
+profile:
+  name: Pierpaolo Vendittelli
+  title: Postdoc Researcher / AI Scientist
+  summary: >
+    PhD candidate (expected June 2026) in AI for computational pathology.
+    4 peer-reviewed publications (PLOS ONE, Cancers, MIDL, SPIE MI, European Radiology, Lancet Oncology, MedIA).
+    Expert in PyTorch, deep learning, WSI analysis, weakly-supervised learning, MIL, transformers.
+    Built production LLM agents (OpenAI API, Python, GitHub Actions). Strong MLOps background (Docker, SLURM, GCP).
+
+target_roles:
+  - Research Scientist
+  - Applied Scientist
+  - Machine Learning Engineer
+  - Computer Vision Engineer
+  - AI Engineer
+  - MLOps Engineer
+  - LLM Engineer
+  - Senior ML Engineer
+
+locations:
+  preferred:
+    - Italy
+    - Remote (EU)
+    - Remote (EU-compatible from Europe)
+  acceptable:
+    - Netherlands
+    - USA (remote from Europe only — no relocation)
+  rejected:
+    - requires relocation to USA
+    - requires relocation to Asia
+    - requires on-site in USA
+
+salary:
+  italy_min_eur: 45000
+  elsewhere_min_eur: 75000
+  currency_note: "Gross annual. For non-EU roles, convert to EUR at current rate."
+
+must_have_keywords:
+  - machine learning
+  - deep learning
+  - AI
+  - Python
+  - research
+
+nice_to_have_keywords:
+  - computer vision
+  - medical imaging
+  - pathology
+  - LLM
+  - agents
+  - PyTorch
+  - transformer
+  - MLOps
+  - RAG
+
+red_flag_keywords:
+  - body leasing
+  - consulting rotation
+  - staff augmentation
+  - on-call 24/7
+  - requires US work authorization
+  - US visa sponsorship required
+  - junior
+  - intern
+  - internship
+  - graduate trainee
+  - no remote
+  - fully on-site
+  - sales
+  - marketing

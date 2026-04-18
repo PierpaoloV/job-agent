@@ -1,0 +1,43 @@
+name: Job Agent
+
+on:
+  schedule:
+    - cron: '0 7,15,21 * * *'   # 07:00, 15:00, 21:00 UTC
+  workflow_dispatch:              # manual trigger
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Restore seen.sqlite from cache
+        uses: actions/cache@v4
+        with:
+          path: data/seen.sqlite
+          key: seen-sqlite-${{ github.run_id }}
+          restore-keys: seen-sqlite-
+
+      - name: Write Gmail credentials
+        run: |
+          echo '${{ secrets.GMAIL_CREDENTIALS_JSON }}' > credentials.json
+          echo '${{ secrets.GMAIL_TOKEN_JSON }}' > token.json
+
+      - name: Run job agent
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: python main.py --days 1
+
+      - name: Clean up credentials
+        if: always()
+        run: rm -f credentials.json token.json
