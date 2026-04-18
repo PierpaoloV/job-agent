@@ -33,6 +33,9 @@ def _parse_linkedin_email(body: str) -> list[dict]:
     jobs = []
     seen_urls = set()
 
+    matching = [a for a in soup.find_all("a", href=True) if "/jobs/view/" in a["href"]]
+    print(f"[DEBUG] _parse_linkedin_email: {len(matching)} <a> tags match /jobs/view/")
+
     # Find all <a> tags linking to LinkedIn job view pages
     # (URLs in emails use /comm/jobs/view/ for tracking; normalize to canonical form)
     for a in soup.find_all("a", href=True):
@@ -45,6 +48,7 @@ def _parse_linkedin_email(body: str) -> list[dict]:
         seen_urls.add(url)
 
         title = a.get_text(strip=True)
+        print(f"[DEBUG] url={url} title={title!r}")
 
         # Walk siblings/parent for company and location text
         company, location = "", ""
