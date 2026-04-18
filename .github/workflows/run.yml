@@ -2,7 +2,7 @@ name: Job Agent
 
 on:
   schedule:
-    - cron: '0 7,15,21 * * *'   # 07:00, 15:00, 21:00 UTC
+    - cron: '0 6,14,20 * * *'   # 07:00, 15:00, 21:00 CET (UTC+1); during CEST (summer, UTC+2) runs at 08:00, 16:00, 22:00
   workflow_dispatch:              # manual trigger
 
 jobs:
@@ -33,7 +33,7 @@ jobs:
 
       - name: Run job agent
         env:
-          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
         run: python main.py --days 1
