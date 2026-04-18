@@ -4,51 +4,53 @@ from bs4 import BeautifulSoup
 from datetime import datetime
 
 
-def _strip_html(html: str) -> str:
-    soup = BeautifulSoup(html, "html.parser")
-    return soup.get_text(separator=" ", strip=True)
-
-
-def _extract_urls(text: str) -> list[str]:
-    return re.findall(r'https?://[^\s\'"<>]+', text)
-
-
 def _clean_url(url: str) -> str:
-    # Strip tracking params after known job ID patterns
     url = re.sub(r'[?&](utm_[^&]+|trk=[^&]+|refId=[^&]+|trackingId=[^&]+)', '', url)
     url = url.rstrip('&?')
     return url
 
 
 def _canonicalize_linkedin_url(href: str) -> str:
-    """Extract the numeric job ID and return the canonical public URL."""
     m = re.search(r'/jobs/view/(\d+)', href)
     if m:
         return f"https://www.linkedin.com/jobs/view/{m.group(1)}"
     return _clean_url(href)
 
 
-def _parse_linkedin_email(body: str) -> list[dict]:
+def _canonicalize_indeed_url(href: str) -> str:
+    m = re.search(r'[?&]jk=([a-zA-Z0-9]+)', href)
+    if m:
+        return f"https://www.indeed.com/viewjob?jk={m.group(1)}"
+    return _clean_url(href)
+
+
+def _canonicalize_glassdoor_url(href: str) -> str:
+    m = re.search(r'[?&](?:jl|jobListingId)=(\d+)', href)
+    if m:
+        return f"https://www.glassdoor.com/job-listing/?jl={m.group(1)}"
+    return _clean_url(href)
+
+
+def _extract_jobs(body: str, url_predicate, canonicalize, source: str) -> list[dict]:
+    """Generic parser: group <a> tags by canonical URL, pick anchor with
+    longest text as the title, walk up ancestors for company/location."""
     soup = BeautifulSoup(body, "html.parser")
 
-    # Group all <a> tags by canonical URL — the same job has multiple anchors
-    # (image wrapper, title, "View job" button); we want the one with real text
     url_to_anchors: dict[str, list] = {}
     for a in soup.find_all("a", href=True):
-        if "/jobs/view/" not in a["href"]:
+        href = a["href"]
+        if not url_predicate(href):
             continue
-        url = _canonicalize_linkedin_url(a["href"])
+        url = canonicalize(href)
         url_to_anchors.setdefault(url, []).append(a)
 
     jobs = []
     for url, anchors in url_to_anchors.items():
-        # Pick the anchor with longest non-empty text (usually the title link)
         best = max(anchors, key=lambda a: len(a.get_text(strip=True)))
         title = best.get_text(strip=True)
         if not title:
             continue
 
-        # Walk up to a job-card-like ancestor and collect text segments
         company, location = "", ""
         ancestor = best
         for _ in range(4):
@@ -67,50 +69,37 @@ def _parse_linkedin_email(body: str) -> list[dict]:
             "company": company,
             "location": location,
             "url": url,
-            "source": "LinkedIn",
+            "source": source,
         })
 
     return jobs
+
+
+def _parse_linkedin_email(body: str) -> list[dict]:
+    return _extract_jobs(
+        body,
+        url_predicate=lambda h: "/jobs/view/" in h,
+        canonicalize=_canonicalize_linkedin_url,
+        source="LinkedIn",
+    )
 
 
 def _parse_indeed_email(body: str) -> list[dict]:
-    text = _strip_html(body)
-    jobs = []
-    urls = _extract_urls(body)
-    job_urls = [u for u in urls if 'indeed.com/viewjob' in u or 'indeed.com/rc/clk' in u]
-    # Try to match title/company patterns near each URL
-    for url in job_urls:
-        jobs.append({
-            "title": "",
-            "company": "",
-            "location": "",
-            "url": _clean_url(url),
-            "source": "Indeed",
-        })
-    # Enrich with text parsing
-    lines = [l.strip() for l in text.split('\n') if l.strip()]
-    for i, job in enumerate(jobs):
-        if i < len(lines):
-            job["title"] = lines[i * 3] if i * 3 < len(lines) else ""
-            job["company"] = lines[i * 3 + 1] if i * 3 + 1 < len(lines) else ""
-            job["location"] = lines[i * 3 + 2] if i * 3 + 2 < len(lines) else ""
-    return jobs
+    return _extract_jobs(
+        body,
+        url_predicate=lambda h: "indeed." in h and ("/viewjob" in h or "/rc/clk" in h or "/job/" in h),
+        canonicalize=_canonicalize_indeed_url,
+        source="Indeed",
+    )
 
 
 def _parse_glassdoor_email(body: str) -> list[dict]:
-    text = _strip_html(body)
-    jobs = []
-    urls = _extract_urls(body)
-    job_urls = [u for u in urls if 'glassdoor.com/job' in u or 'glassdoor.com/partner' in u]
-    for url in job_urls:
-        jobs.append({
-            "title": "",
-            "company": "",
-            "location": "",
-            "url": _clean_url(url),
-            "source": "Glassdoor",
-        })
-    return jobs
+    return _extract_jobs(
+        body,
+        url_predicate=lambda h: "glassdoor." in h and ("/job-listing/" in h or "/partner/" in h or "/job/" in h),
+        canonicalize=_canonicalize_glassdoor_url,
+        source="Glassdoor",
+    )
 
 
 def parse_emails(emails: list[dict]) -> list[dict]:
