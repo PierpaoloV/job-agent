@@ -31,11 +31,23 @@ def _get_service():
 
 
 def _decode_body(part):
-    data = part.get("body", {}).get("data", "")
-    if data:
-        return base64.urlsafe_b64decode(data).decode("utf-8", errors="replace")
+    """Recursively find and decode the email body, preferring text/html."""
+    html = _find_mime(part, "text/html")
+    if html:
+        return html
+    plain = _find_mime(part, "text/plain")
+    if plain:
+        return plain
+    return ""
+
+
+def _find_mime(part, mime_type: str) -> str:
+    if part.get("mimeType") == mime_type:
+        data = part.get("body", {}).get("data", "")
+        if data:
+            return base64.urlsafe_b64decode(data).decode("utf-8", errors="replace")
     for sub in part.get("parts", []):
-        result = _decode_body(sub)
+        result = _find_mime(sub, mime_type)
         if result:
             return result
     return ""
