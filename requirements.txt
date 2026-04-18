@@ -1,7 +1,7 @@
 google-auth-oauthlib>=1.2
 google-auth-httplib2>=0.2
 google-api-python-client>=2.120
-openai>=1.30
+anthropic>=0.40
 beautifulsoup4>=4.12
 pyyaml>=6.0
 requests>=2.31
