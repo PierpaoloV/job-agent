@@ -13,6 +13,12 @@ def _send(token: str, chat_id: str, text: str, parse_mode: str = "HTML"):
     resp.raise_for_status()
 
 
+def send_error(message: str):
+    token = os.environ["TELEGRAM_BOT_TOKEN"]
+    chat_id = os.environ["TELEGRAM_CHAT_ID"]
+    _send(token, chat_id, f"❌ <b>Job Agent Error</b>\n\n{message}")
+
+
 def send_digest(jobs: list[dict]):
     token = os.environ["TELEGRAM_BOT_TOKEN"]
     chat_id = os.environ["TELEGRAM_CHAT_ID"]
