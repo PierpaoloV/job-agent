@@ -11,7 +11,8 @@ def _send(token: str, chat_id: str, text: str, parse_mode: str = "HTML"):
         "parse_mode": parse_mode,
         "disable_web_page_preview": True,
     }, timeout=15)
-    resp.raise_for_status()
+    if not resp.ok:
+        raise RuntimeError(f"Telegram send failed with HTTP {resp.status_code}: {resp.text[:200]}")
 
 
 def send_error(message: str):
