@@ -1,4 +1,4 @@
-"""Fetch job alert emails from Gmail (LinkedIn, Indeed, Glassdoor)."""
+"""Fetch job alert emails from Gmail."""
 import os, base64, pathlib
 from google.oauth2.credentials import Credentials
 from google.auth.transport.requests import Request
@@ -14,6 +14,9 @@ SENDER_FILTERS = [
     "noreply@glassdoor.com",
     "jobs-listings@linkedin.com",
     "noreply@linkedin.com",
+    "welcometothejungle.com",
+    "wttj.co",
+    "eurotechjobs.com",
 ]
 
 

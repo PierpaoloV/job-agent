@@ -26,7 +26,18 @@ def _load_context():
 
 
 def _check_red_flags(job: dict, prefs: dict) -> list[str]:
-    text = f"{job.get('title','')} {job.get('company','')} {job.get('location','')} {job.get('description','')}".lower()
+    text = " ".join([
+        job.get("title", ""),
+        job.get("company", ""),
+        job.get("location", ""),
+        job.get("description", ""),
+        job.get("snippet", ""),
+        job.get("raw_email_context", ""),
+        job.get("salary", ""),
+        job.get("remote_policy", ""),
+        job.get("seniority", ""),
+        " ".join(job.get("required_skills", [])),
+    ]).lower()
     return [kw for kw in prefs.get("red_flag_keywords", []) if kw.lower() in text]
 
 
@@ -97,9 +108,16 @@ If salary, remote policy, or seniority are unclear, do not invent details. State
 
 Return JSON with keys:
 - "score": float 0.0–1.0
-- "rationale": 2–3 sentences
+- "priority": "high" | "medium" | "low"
+- "verdict": one short sentence saying whether this is worth applying to
+- "reasons": array of 1–3 short strings naming the strongest fit signals
+- "concerns": array of 0–3 short strings naming blockers, uncertainties, or weak signals
+- "application_angle": one short phrase suggesting how the candidate should position themselves
+- "rationale": 1–2 concise sentences for fallback display
 - "location_ok": true/false
 - "role_match": "strong" | "moderate" | "weak"
+
+Keep all user-facing strings concise. The output will be shown in a Telegram digest, so prefer scannable fragments over paragraphs.
 """
 
     user_prompt = f"""## Job Listing
@@ -108,6 +126,12 @@ Company: {job.get('company', 'N/A')}
 Location: {job.get('location', 'N/A')}
 Source: {job.get('source', 'N/A')}
 URL: {job.get('url', 'N/A')}
+Seniority: {job.get('seniority') or 'Unknown'}
+Remote policy: {job.get('remote_policy') or 'Unknown'}
+Salary: {job.get('salary') or 'Unknown'}
+Required skills found in alert: {', '.join(job.get('required_skills', [])) or 'Unknown'}
+Alert snippet: {job.get('snippet') or 'N/A'}
+Raw alert context: {job.get('raw_email_context') or 'N/A'}
 
 Score this job for the candidate above.
 """
@@ -133,6 +157,11 @@ Score this job for the candidate above.
         return {
             **job,
             "score": float(result.get("score", 0.0)),
+            "priority": result.get("priority", "low"),
+            "verdict": result.get("verdict", ""),
+            "reasons": result.get("reasons", []),
+            "concerns": result.get("concerns", []),
+            "application_angle": result.get("application_angle", ""),
             "rationale": result.get("rationale", ""),
             "location_ok": result.get("location_ok", True),
             "role_match": result.get("role_match", "unknown"),

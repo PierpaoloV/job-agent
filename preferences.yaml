@@ -32,7 +32,7 @@ locations:
 
 salary:
   italy_min_eur: 45000
-  elsewhere_min_eur: 75000
+  elsewhere_min_eur: 65000
   currency_note: "Gross annual. For non-EU roles, convert to EUR at current rate."
 
 must_have_keywords:
