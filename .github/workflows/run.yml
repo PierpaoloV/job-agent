@@ -38,6 +38,7 @@ jobs:
       - name: Run job agent
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          JOB_AGENT_RESUME_MD: ${{ secrets.JOB_AGENT_RESUME_MD }}
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
         run: python main.py --days 1

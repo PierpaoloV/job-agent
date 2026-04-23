@@ -22,7 +22,14 @@ def _get_client() -> anthropic.Anthropic:
 
 def _load_context():
     prefs = yaml.safe_load(PREFS_PATH.read_text())
-    resume = RESUME_PATH.read_text()
+    resume = os.environ.get("JOB_AGENT_RESUME_MD")
+    if not resume and RESUME_PATH.exists():
+        resume = RESUME_PATH.read_text()
+    if not resume:
+        raise RuntimeError(
+            "Resume context is missing. Set JOB_AGENT_RESUME_MD in the environment "
+            "or create a local ignored resume.md file."
+        )
     return prefs, resume
 
 

@@ -1,5 +1,6 @@
 credentials.json
 token.json
+resume.md
 data/seen.sqlite
 data/
 __pycache__/
