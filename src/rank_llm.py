@@ -1,5 +1,6 @@
 """LLM-based job ranking using Claude (Anthropic)."""
 import os, json, re, pathlib
+from urllib.parse import urlparse, urlunparse
 import anthropic
 import yaml
 
@@ -39,6 +40,25 @@ def _check_red_flags(job: dict, prefs: dict) -> list[str]:
         " ".join(job.get("required_skills", [])),
     ]).lower()
     return [kw for kw in prefs.get("red_flag_keywords", []) if kw.lower() in text]
+
+
+def _url_for_prompt(url: str) -> str:
+    """Keep provider context without sending email-tracking query tokens to the LLM."""
+    if not url:
+        return "N/A"
+    try:
+        parts = urlparse(url)
+    except Exception:
+        return "Redacted"
+
+    host = parts.netloc.lower()
+    if not host:
+        return "N/A"
+    if host.endswith("welcometothejungle.com") and parts.path == "/ls/click":
+        return "Welcome to the Jungle tracking link redacted"
+
+    path = parts.path.rstrip("/") or parts.path
+    return urlunparse(parts._replace(netloc=host, path=path, query="", fragment=""))
 
 
 def score_job(job: dict) -> dict:
@@ -125,7 +145,7 @@ Title: {job.get('title', 'N/A')}
 Company: {job.get('company', 'N/A')}
 Location: {job.get('location', 'N/A')}
 Source: {job.get('source', 'N/A')}
-URL: {job.get('url', 'N/A')}
+URL: {_url_for_prompt(job.get('url', ''))}
 Seniority: {job.get('seniority') or 'Unknown'}
 Remote policy: {job.get('remote_policy') or 'Unknown'}
 Salary: {job.get('salary') or 'Unknown'}

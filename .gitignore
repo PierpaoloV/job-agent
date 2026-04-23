@@ -1,8 +1,13 @@
 credentials.json
 token.json
 data/seen.sqlite
+data/
 __pycache__/
 *.pyc
+.pytest_cache/
 .env
+*.sqlite
+*.db
+test_pipeline.py
 stage1_results.csv
 stage2_reranked.csv
