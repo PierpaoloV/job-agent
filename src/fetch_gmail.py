@@ -1,5 +1,9 @@
 """Fetch job alert emails from Gmail."""
-import os, base64, pathlib
+import base64
+import os
+import pathlib
+
+from google.auth.exceptions import RefreshError
 from google.oauth2.credentials import Credentials
 from google.auth.transport.requests import Request
 from googleapiclient.discovery import build
@@ -26,11 +30,32 @@ def _get_service():
         creds = Credentials.from_authorized_user_file(str(TOKEN_PATH), SCOPES)
     if not creds or not creds.valid:
         if creds and creds.expired and creds.refresh_token:
-            creds.refresh(Request())
+            try:
+                creds.refresh(Request())
+            except RefreshError as exc:
+                raise RuntimeError(_format_refresh_failure(exc)) from exc
             TOKEN_PATH.write_text(creds.to_json())
         else:
             raise RuntimeError("token.json missing or invalid — run auth_gmail.py first")
     return build("gmail", "v1", credentials=creds)
+
+
+def _format_refresh_failure(exc: Exception) -> str:
+    error_text = str(exc)
+    normalized = error_text.lower()
+
+    if "invalid_grant" not in normalized and "expired or revoked" not in normalized:
+        return f"Gmail OAuth refresh failed: {error_text}"
+
+    recovery = "Re-run `python auth_gmail.py` locally to generate a new `token.json`."
+    if os.environ.get("GITHUB_ACTIONS") == "true":
+        recovery += " Then update the `GMAIL_TOKEN_JSON` GitHub Actions secret with the new file contents."
+
+    return (
+        "Gmail OAuth refresh token was expired or revoked. "
+        f"{recovery} "
+        "If this repeats every few days, publish the Google OAuth consent screen to Production instead of Testing."
+    )
 
 
 def _decode_body(part):

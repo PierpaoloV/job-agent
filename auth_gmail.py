@@ -10,7 +10,12 @@ def main():
         raise FileNotFoundError("credentials.json not found — place it next to this script")
 
     flow = InstalledAppFlow.from_client_secrets_file(str(creds_path), SCOPES)
-    creds = flow.run_local_server(port=0)
+    creds = flow.run_local_server(
+        port=0,
+        access_type="offline",
+        prompt="consent",
+        include_granted_scopes="true",
+    )
 
     token_path = pathlib.Path(__file__).parent / "token.json"
     token_path.write_text(creds.to_json())

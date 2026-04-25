@@ -36,6 +36,7 @@ the public repo.
 ├── scripts/
 │   └── mark_applied.py        # Local application logger
 └── tests/
+    ├── test_fetch_gmail.py     # Gmail token-refresh error handling
     ├── test_parse_jobs.py
     └── test_rank_llm_context.py
 ```
@@ -95,6 +96,10 @@ python auth_gmail.py
 ```
 
 This creates ignored `token.json`.
+If Gmail starts returning `invalid_grant` or `Token has been expired or revoked`, rerun
+`python auth_gmail.py` and replace the `GMAIL_TOKEN_JSON` GitHub Actions secret with
+the new `token.json` contents. If the token keeps expiring after a short time, check
+whether the Google OAuth consent screen is still in Testing mode.
 
 4. Export runtime secrets for local runs.
 
