@@ -7,7 +7,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from opportunity_domain import Runtime
 from opportunity_sources import OpportunityLead
-from search_official_source import SearchOfficialSource
+from search_official_source import SearchOfficialSource, is_official_company_url
 
 
 class Response:
@@ -165,3 +165,17 @@ def test_brave_fallback_recovers_when_duckduckgo_is_rate_limited():
     )
 
     assert vacancy.official_job_id == "current"
+
+
+def test_company_scoped_gem_url_is_an_official_ats_boundary():
+    assert is_official_company_url(
+        "https://jobs.gem.com/rivia/am9icG9zdDpX6tPeu4scKBFrmPoeoZ57",
+        "Rivia",
+    )
+
+
+def test_gem_url_cannot_impersonate_a_different_employer():
+    assert not is_official_company_url(
+        "https://jobs.gem.com/other-company/am9icG9zdDpX6tPeu4scKBFrmPoeoZ57",
+        "Rivia",
+    )

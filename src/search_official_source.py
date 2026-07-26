@@ -39,6 +39,9 @@ _KNOWN_ATS_HOSTS = (
     "myworkdayjobs.com",
     "smartrecruiters.com",
 )
+_COMPANY_SCOPED_ATS_HOSTS = (
+    "jobs.gem.com",
+)
 _HEADERS = {
     "User-Agent": (
         "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
@@ -268,16 +271,20 @@ def _official_origin(
 def is_official_company_url(url: str, company: str) -> bool:
     if _excluded(url):
         return False
-    page_host = urlparse(url).netloc.casefold().split(":", 1)[0]
+    parsed = urlparse(url)
+    page_host = parsed.netloc.casefold().split(":", 1)[0]
     if not page_host:
         return False
-    if any(marker in page_host for marker in _KNOWN_ATS_HOSTS):
-        return True
     company_tokens = {
         token
         for token in re.findall(r"[a-z0-9]+", _fold(company))
         if len(token) >= 4 and token not in {"technology", "technologies"}
     }
+    if page_host in _COMPANY_SCOPED_ATS_HOSTS:
+        path_tokens = set(re.findall(r"[a-z0-9]+", _fold(parsed.path)))
+        return bool(company_tokens & path_tokens)
+    if any(marker in page_host for marker in _KNOWN_ATS_HOSTS):
+        return True
     return any(token in page_host for token in company_tokens)
 
 

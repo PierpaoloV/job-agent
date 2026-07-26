@@ -158,7 +158,11 @@ class ProductionPortfolioGrader:
                 resolution_status = str(
                     resolved.get("resolution_status", "unknown")
                 )
-                resolved_job, raw_grade = _accept_web_resolution(
+                (
+                    resolved_job,
+                    raw_grade,
+                    rejection_reason,
+                ) = _accept_web_resolution(
                     grading_job,
                     resolved,
                 )
@@ -166,7 +170,8 @@ class ProductionPortfolioGrader:
                     print(
                         "Web grading resolution "
                         f"{grading_job['stable_id']}: "
-                        f"status={resolution_status}, accepted=false"
+                        f"status={resolution_status}, accepted=false, "
+                        f"reason={rejection_reason}"
                     )
                     continue
                 print(
@@ -242,34 +247,40 @@ def _public_alert_lead(job):
 
 def _accept_web_resolution(job, response):
     if response.get("resolution_status") != "verified":
-        return None, None
+        return None, None, "resolution_not_verified"
     vacancy = response.get("resolved_vacancy")
     grade = response.get("grade")
-    if not isinstance(vacancy, dict) or not isinstance(grade, dict):
-        return None, None
+    if not isinstance(vacancy, dict):
+        return None, None, "missing_resolved_vacancy"
+    if not isinstance(grade, dict):
+        return None, None, "missing_grade"
     official_url = str(vacancy.get("official_url", "")).strip()
     company = str(vacancy.get("company", "")).strip()
     title = str(vacancy.get("title", "")).strip()
     description = str(
         vacancy.get("official_description", "")
     ).strip()
-    if (
-        not official_url
-        or not company
-        or not title
-        or len(description) < 120
-        or not _same_identity(company, str(job.get("company", "")))
-        or not _same_identity(title, str(job.get("title", "")))
-        or not is_official_company_url(official_url, company)
-    ):
-        return None, None
+    if not official_url:
+        return None, None, "missing_official_url"
+    if not company:
+        return None, None, "missing_company"
+    if not title:
+        return None, None, "missing_title"
+    if len(description) < 120:
+        return None, None, "description_too_short"
+    if not _same_identity(company, str(job.get("company", ""))):
+        return None, None, "company_mismatch"
+    if not _same_identity(title, str(job.get("title", ""))):
+        return None, None, "title_mismatch"
+    if not is_official_company_url(official_url, company):
+        return None, None, "untrusted_official_url"
     sources = tuple(
         str(source)
         for source in grade.get("sources", ())
         if str(source).startswith("http")
     )
     if not any(is_official_company_url(source, company) for source in sources):
-        return None, None
+        return None, None, "no_trusted_grade_source"
     now = SystemClock().now().isoformat()
     official = OfficialVacancyData(
         official_job_id=str(
@@ -335,7 +346,7 @@ def _accept_web_resolution(job, response):
             vacancy.get("process_language", "unknown")
         ),
     }
-    return verified, grade
+    return verified, grade, None
 
 
 def _normalize_web_grade_matrix(raw_grade, requirements, profile):

@@ -641,6 +641,65 @@ def test_production_grader_resolves_and_grades_pending_role_in_one_model_call(
     assert serialized["compensation"]["base_cash"]["status"] == "unknown"
 
 
+def test_web_resolution_accepts_company_scoped_gem_ats_url(tmp_path, capsys):
+    response = valid_response()
+    response["sources"] = [
+        "https://jobs.gem.com/rivia/am9icG9zdDpX6tPeu4scKBFrmPoeoZ57"
+    ]
+
+    class GemProvider(FakeProvider):
+        identity = "fake-web-grader"
+
+        def resolve_and_grade(self, lead, professional_profile):
+            return {
+                "resolution_status": "verified",
+                "resolved_vacancy": {
+                    "official_url": response["sources"][0],
+                    "official_job_id": "R28",
+                    "title": "Senior AI Engineer",
+                    "company": "Rivia",
+                    "team": "Product",
+                    "location": "Zurich, Switzerland",
+                    "modality": "Hybrid",
+                    "seniority": "Senior",
+                    "official_description": (
+                        "Rivia is hiring a Senior AI Engineer to architect and "
+                        "ship production-grade agentic AI workflows for clinical "
+                        "trial intelligence, from evaluation through deployment, "
+                        "observability, and continuous improvement."
+                    ),
+                    "requirements": ["Production-grade AI systems"],
+                    "published_at": "2026-02-17",
+                    "process_language": "english",
+                },
+                "grade": response,
+            }
+
+    ranked = main.ProductionPortfolioGrader(
+        store=DeepGradeStore(tmp_path),
+        provider=GemProvider(),
+        profile_loader=profile,
+    ).rank(
+        [
+            vacancy(
+                stable_id="linkedin:4399398799",
+                title="Senior AI Engineer",
+                company="Rivia",
+                verification_status="needs_local_fetch",
+                official_description="",
+                screening_outcome="shortlisted",
+                source="LinkedIn",
+                url="https://www.linkedin.com/jobs/view/4399398799",
+            )
+        ],
+        10,
+    )
+
+    assert len(ranked) == 1
+    assert ranked[0]["official_url"].startswith("https://jobs.gem.com/rivia/")
+    assert "status=verified, accepted=true" in capsys.readouterr().out
+
+
 def test_web_resolution_unavailable_makes_no_grade(tmp_path, capsys):
     class UnavailableProvider(FakeProvider):
         identity = "fake-web-grader"
