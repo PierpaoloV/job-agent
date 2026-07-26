@@ -1,0 +1,432 @@
+name: Daily job discovery
+
+run-name: >-
+  ${{ github.event_name == 'repository_dispatch'
+      && github.event.action == 'telegram-opportunity-decision'
+      && format('telegram-{0}|{1}|{2}', github.event.client_payload.action, github.event.client_payload.application_id, github.event.client_payload.official_vacancy_version)
+      || github.event_name == 'repository_dispatch'
+      && format('prepare-application|{0}|{1}', github.event.client_payload.application_id, github.event.client_payload.official_vacancy_version)
+      || 'Daily job discovery' }}
+
+on:
+  schedule:
+    - cron: '0 6 * * *'
+  workflow_dispatch:
+    inputs:
+      discovery_days:
+        description: Days of email alerts to inspect
+        required: false
+        default: '1'
+      replay_sources:
+        description: Comma-separated sources to replay exactly once
+        required: false
+        default: ''
+      replay_id:
+        description: Unique replay name required when replay_sources is set
+        required: false
+        default: ''
+  repository_dispatch:
+    types: [prepare-application, telegram-opportunity-decision]
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: job-agent-authoritative-state
+  cancel-in-progress: false
+
+jobs:
+  ingest-and-screen:
+    if: github.event_name != 'repository_dispatch'
+    runs-on: ubuntu-latest
+    outputs:
+      verified_count: ${{ steps.ingest.outputs.verified_count }}
+      artifact_version: ${{ steps.ingest.outputs.artifact_version }}
+      shortlist_artifact: shortlist-${{ github.run_id }}-${{ github.run_attempt }}-${{ steps.ingest.outputs.artifact_version }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Validate hosted identity
+        env:
+          PYTHONPATH: src
+          JOB_AGENT_CANDIDATE_NAME: ${{ vars.JOB_AGENT_CANDIDATE_NAME }}
+          JOB_AGENT_CAREER_GMAIL: ${{ vars.JOB_AGENT_CAREER_GMAIL }}
+          JOB_AGENT_GITHUB_REPOSITORY: ${{ github.repository }}
+          JOB_AGENT_GITHUB_BRANCH: ${{ github.event.repository.default_branch }}
+          JOB_AGENT_CANONICAL_CV_URL: ${{ vars.JOB_AGENT_CANONICAL_CV_URL }}
+          TELEGRAM_ACTOR_ID: ${{ secrets.TELEGRAM_ACTOR_ID }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: python -m hosted_runtime_config validate-env
+
+      - name: Restore durable discovery state
+        uses: actions/cache@v4
+        with:
+          path: data
+          key: state-ingest-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: state-
+
+      - name: Restore authoritative cross-run state
+        id: restore_state
+        env:
+          PYTHONPATH: src
+          GITHUB_TOKEN: ${{ github.token }}
+        run: >-
+          python -m actions_state restore-latest
+          --root .
+          --repository ${{ github.repository }}
+          --workflow run.yml
+          --branch ${{ github.event.repository.default_branch }}
+
+      - name: Write Gmail credentials
+        env:
+          JOB_AGENT_PREFERENCES_YAML: ${{ secrets.JOB_AGENT_PREFERENCES_YAML }}
+        run: |
+          umask 077
+          mkdir -p data/hosted-inputs
+          printf '%s' '${{ secrets.GMAIL_CREDENTIALS_JSON }}' > credentials.json
+          printf '%s' '${{ secrets.GMAIL_TOKEN_JSON }}' > token.json
+          printf '%s' "$JOB_AGENT_PREFERENCES_YAML" > data/hosted-inputs/preferences.yaml
+
+      - name: Ingest, normalize, deduplicate, and screen locally
+        id: ingest
+        env:
+          PYTHONPATH: src
+          JOB_AGENT_CAREER_GMAIL: ${{ vars.JOB_AGENT_CAREER_GMAIL }}
+          JOB_AGENT_PREFERENCES_PATH: data/hosted-inputs/preferences.yaml
+          JOB_AGENT_REPLAY_SOURCES: ${{ inputs.replay_sources || '' }}
+          JOB_AGENT_REPLAY_ID: ${{ inputs.replay_id || '' }}
+        run: >-
+          python -m discovery_jobs ingest-and-screen
+          --days ${{ inputs.discovery_days || '1' }}
+          --output data/workflow/shortlist.json
+
+      - name: Publish versioned non-sensitive shortlist
+        uses: actions/upload-artifact@v4
+        with:
+          name: shortlist-${{ github.run_id }}-${{ github.run_attempt }}-${{ steps.ingest.outputs.artifact_version }}
+          path: data/workflow/shortlist.json
+          if-no-files-found: error
+          retention-days: 3
+
+      - name: Mark successfully published leads as processed
+        env:
+          PYTHONPATH: src
+          JOB_AGENT_REPLAY_SOURCES: ${{ inputs.replay_sources || '' }}
+          JOB_AGENT_REPLAY_ID: ${{ inputs.replay_id || '' }}
+        run: >-
+          python -m discovery_jobs finalize-ingest
+          --artifact data/workflow/shortlist.json
+
+      - name: Send due digest and deadline alerts from prior grades
+        env:
+          PYTHONPATH: src
+          JOB_AGENT_DIGEST_DAYS: '3'
+          JOB_AGENT_DIGEST_LIMIT: '10'
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          TELEGRAM_ACTOR_ID: ${{ secrets.TELEGRAM_ACTOR_ID }}
+          JOB_AGENT_CALLBACK_GATEWAY_URL: ${{ vars.JOB_AGENT_CALLBACK_GATEWAY_URL }}
+          JOB_AGENT_CALLBACK_GATEWAY_TOKEN: ${{ secrets.JOB_AGENT_CALLBACK_GATEWAY_TOKEN }}
+        run: python -m discovery_jobs dispatch-schedule
+
+      - name: Clean up credentials
+        if: always()
+        run: rm -f credentials.json token.json data/hosted-inputs/preferences.yaml
+
+      - name: Package authoritative discovery state
+        id: package_state
+        if: always() && steps.restore_state.outcome == 'success'
+        env:
+          PYTHONPATH: src
+        run: >-
+          python -m actions_state write-manifest
+          --root . --workflow run.yml
+          --branch ${{ github.event.repository.default_branch }}
+          --stage ingest
+
+      - name: Publish authoritative discovery state
+        if: always() && steps.package_state.outcome == 'success'
+        uses: actions/upload-artifact@v4
+        with:
+          name: discovery-state-ingest-${{ github.run_id }}-${{ github.run_attempt }}
+          path: data/actions-state
+          if-no-files-found: error
+          retention-days: 14
+
+  deep-grade:
+    needs: ingest-and-screen
+    if: needs.ingest-and-screen.outputs.verified_count != '0'
+    runs-on: ubuntu-latest
+    env:
+      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+      JOB_AGENT_GRADING_PROFILE_JSON: ${{ secrets.JOB_AGENT_GRADING_PROFILE_JSON }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Restore durable grading and notification state
+        uses: actions/cache@v4
+        with:
+          path: data
+          key: state-deep-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: state-
+
+      - name: Download current authoritative discovery state
+        uses: actions/download-artifact@v4
+        with:
+          name: discovery-state-ingest-${{ github.run_id }}-${{ github.run_attempt }}
+          path: data/restored-actions-state
+
+      - name: Validate and install authoritative discovery state
+        id: install_state
+        env:
+          PYTHONPATH: src
+        run: |
+          python -m actions_state validate-manifest --root . --package data/restored-actions-state
+          python -m actions_state install-package --root . --package data/restored-actions-state
+
+      - name: Download exact shortlist artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ needs.ingest-and-screen.outputs.shortlist_artifact }}
+          path: data/workflow
+
+      - name: Deep-grade each verified role once
+        env:
+          PYTHONPATH: src
+        run: >-
+          python -m discovery_jobs deep-grade
+          --artifact data/workflow/shortlist.json
+          --output data/workflow/graded-jobs.json
+
+      - name: Stage immediate alerts and due digest
+        env:
+          PYTHONPATH: src
+          JOB_AGENT_DIGEST_DAYS: '3'
+          JOB_AGENT_DIGEST_LIMIT: '10'
+        run: >-
+          python -m discovery_jobs dispatch-schedule
+          --stage-only
+          --graded-jobs data/workflow/graded-jobs.json
+
+      - name: Package authoritative graded state for preparation
+        id: package_preparation_state
+        env:
+          PYTHONPATH: src
+        run: >-
+          python -m actions_state write-manifest
+          --root . --workflow run.yml
+          --branch ${{ github.event.repository.default_branch }}
+          --stage deep
+
+      - name: Publish authoritative graded state before alerts
+        uses: actions/upload-artifact@v4
+        with:
+          name: discovery-state-ready-${{ github.run_id }}-${{ github.run_attempt }}
+          path: data/actions-state
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Send immediate alerts and due digest
+        env:
+          PYTHONPATH: src
+          JOB_AGENT_DIGEST_DAYS: '3'
+          JOB_AGENT_DIGEST_LIMIT: '10'
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          TELEGRAM_ACTOR_ID: ${{ secrets.TELEGRAM_ACTOR_ID }}
+          JOB_AGENT_CALLBACK_GATEWAY_URL: ${{ vars.JOB_AGENT_CALLBACK_GATEWAY_URL }}
+          JOB_AGENT_CALLBACK_GATEWAY_TOKEN: ${{ secrets.JOB_AGENT_CALLBACK_GATEWAY_TOKEN }}
+        run: >-
+          python -m discovery_jobs dispatch-schedule
+          --dispatch-only
+          --graded-jobs data/workflow/graded-jobs.json
+
+      - name: Package final authoritative graded state
+        id: package_state
+        if: always() && steps.package_preparation_state.outcome == 'success'
+        env:
+          PYTHONPATH: src
+        run: >-
+          python -m actions_state write-manifest
+          --root . --workflow run.yml
+          --branch ${{ github.event.repository.default_branch }}
+          --stage deep
+
+      - name: Publish final authoritative graded state
+        if: always() && steps.package_state.outcome == 'success'
+        uses: actions/upload-artifact@v4
+        with:
+          name: discovery-state-deep-${{ github.run_id }}-${{ github.run_attempt }}
+          path: data/actions-state
+          if-no-files-found: error
+          retention-days: 14
+
+  handle-opportunity-decision:
+    if: >-
+      github.event_name == 'repository_dispatch'
+      && github.event.action == 'telegram-opportunity-decision'
+      && github.event.client_payload.action != 'prepare'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Restore exact authoritative opportunity state
+        env:
+          PYTHONPATH: src
+          GITHUB_TOKEN: ${{ github.token }}
+        run: >-
+          python -m actions_state restore-latest
+          --root .
+          --repository ${{ github.repository }}
+          --workflow run.yml
+          --branch ${{ github.event.repository.default_branch }}
+
+      - name: Execute exact-version Telegram decision
+        env:
+          PYTHONPATH: src
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          DECISION_ACTION: ${{ github.event.client_payload.action }}
+          APPLICATION_ID: ${{ github.event.client_payload.application_id }}
+          VACANCY_VERSION: ${{ github.event.client_payload.official_vacancy_version }}
+        run: >-
+          python -m hosted_opportunity_decision
+          --root .
+          --action "$DECISION_ACTION"
+          --application-id "$APPLICATION_ID"
+          --official-vacancy-version "$VACANCY_VERSION"
+          --event-path "$GITHUB_EVENT_PATH"
+
+      - name: Package authoritative decision state
+        id: package_state
+        env:
+          PYTHONPATH: src
+        run: >-
+          python -m actions_state write-manifest
+          --root . --workflow run.yml
+          --branch ${{ github.event.repository.default_branch }}
+          --stage decision
+
+      - name: Publish authoritative decision state
+        uses: actions/upload-artifact@v4
+        with:
+          name: discovery-state-decision-${{ github.run_id }}-${{ github.run_attempt }}
+          path: data/actions-state
+          if-no-files-found: error
+          retention-days: 14
+
+  prepare-artifacts:
+    if: >-
+      github.event_name == 'repository_dispatch'
+      && (
+        github.event.action == 'prepare-application'
+        || (
+          github.event.action == 'telegram-opportunity-decision'
+          && github.event.client_payload.action == 'prepare'
+        )
+      )
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Validate hosted identity
+        env:
+          PYTHONPATH: src
+          JOB_AGENT_CANDIDATE_NAME: ${{ vars.JOB_AGENT_CANDIDATE_NAME }}
+          JOB_AGENT_CAREER_GMAIL: ${{ vars.JOB_AGENT_CAREER_GMAIL }}
+          JOB_AGENT_GITHUB_REPOSITORY: ${{ github.repository }}
+          JOB_AGENT_GITHUB_BRANCH: ${{ github.event.repository.default_branch }}
+          JOB_AGENT_CANONICAL_CV_URL: ${{ vars.JOB_AGENT_CANONICAL_CV_URL }}
+          TELEGRAM_ACTOR_ID: ${{ secrets.TELEGRAM_ACTOR_ID }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: python -m hosted_runtime_config validate-env
+
+      - name: Restore exact authoritative grading inputs
+        env:
+          PYTHONPATH: src
+          GITHUB_TOKEN: ${{ github.token }}
+        run: >-
+          python -m actions_state restore-latest
+          --root .
+          --repository ${{ github.repository }}
+          --workflow run.yml
+          --branch ${{ github.event.repository.default_branch }}
+
+      - name: Materialize private evidence and canonical CV
+        env:
+          JOB_AGENT_EVIDENCE_YAML: ${{ secrets.JOB_AGENT_EVIDENCE_YAML }}
+          JOB_AGENT_CANONICAL_CV_URL: ${{ vars.JOB_AGENT_CANONICAL_CV_URL }}
+        run: |
+          umask 077
+          mkdir -p data/hosted-inputs
+          printf '%s' "$JOB_AGENT_EVIDENCE_YAML" > data/hosted-inputs/evidence.yaml
+          curl -fsSL "$JOB_AGENT_CANONICAL_CV_URL" \
+            -o data/hosted-inputs/curriculum_vitae.pdf
+
+      - name: Generate, audit, render, and encrypt CV plus cover letter
+        id: prepare
+        env:
+          PYTHONPATH: src
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          JOB_AGENT_ARTIFACT_HANDOFF_KEY: ${{ secrets.JOB_AGENT_ARTIFACT_HANDOFF_KEY }}
+          JOB_AGENT_CANDIDATE_NAME: ${{ vars.JOB_AGENT_CANDIDATE_NAME }}
+          APPLICATION_ID: ${{ github.event.client_payload.application_id }}
+          VACANCY_VERSION: ${{ github.event.client_payload.official_vacancy_version }}
+        run: >-
+          python -m hosted_artifact_preparation prepare
+          --root .
+          --inputs data/hosted-preparation-inputs
+          --evidence data/hosted-inputs/evidence.yaml
+          --canonical-cv data/hosted-inputs/curriculum_vitae.pdf
+          --candidate-name "$JOB_AGENT_CANDIDATE_NAME"
+          --application-id "$APPLICATION_ID"
+          --official-vacancy-version "$VACANCY_VERSION"
+          --output data/hosted-output/application-artifacts.enc
+          --repository "${{ github.repository }}"
+          --workflow run.yml
+          --branch "${{ github.event.repository.default_branch }}"
+
+      - name: Publish encrypted application package
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.prepare.outputs.artifact_name }}
+          path: data/hosted-output/application-artifacts.enc
+          if-no-files-found: error
+          retention-days: 3
+
+      - name: Remove plaintext candidate material
+        if: always()
+        run: rm -rf data/hosted-inputs data/private/application-artifacts

@@ -1,0 +1,48 @@
+# Synthetic hosted installer configuration.
+# Copy this file to an ignored location and replace every example value.
+# Secret values are never allowed here: only environment-variable names.
+version: 1
+
+deployment:
+  name: sample-job-agent
+
+github:
+  repository: example-user/job-agent
+  branch: main
+  workflow: run.yml
+  dispatch_token_env: GITHUB_DISPATCH_TOKEN
+
+gmail:
+  account: career.example@gmail.com
+  credentials_file: /absolute/path/to/gmail-credentials.json
+  token_file: /absolute/path/to/gmail-token.json
+
+telegram:
+  bot_token_env: TELEGRAM_BOT_TOKEN
+  chat_id: "123456789"
+  actor_id: "123456789"
+
+providers:
+  openai:
+    api_key_env: OPENAI_API_KEY
+  anthropic:
+    enabled: true
+    api_key_env: ANTHROPIC_API_KEY
+
+profile:
+  candidate_name: Example Candidate
+  cv_file: /absolute/path/to/curriculum-vitae.pdf
+  canonical_cv_url: https://files.example.com/curriculum-vitae.pdf
+  grading_profile_file: grading-profile.example.json
+  evidence_file: professional-evidence.example.yaml
+  preferences_file: ../preferences.example.yaml
+  artifact_handoff_key_env: JOB_AGENT_ARTIFACT_HANDOFF_KEY
+
+cloudflare:
+  worker_name: sample-job-agent-gateway
+  d1_database_name: sample-job-agent
+  worker_directory: ../cloudflare/telegram-gateway
+  api_token_env: CLOUDFLARE_API_TOKEN
+  callback_token_env: JOB_AGENT_CALLBACK_GATEWAY_TOKEN
+  webhook_secret_env: TELEGRAM_WEBHOOK_SECRET
+  worker_url: https://sample-job-agent-gateway.example-subdomain.workers.dev

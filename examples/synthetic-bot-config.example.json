@@ -1,0 +1,13 @@
+{
+  "version": 1,
+  "purpose": "synthetic-e2e-test",
+  "telegram": {
+    "actor_id": "YOUR_TELEGRAM_USER_ID",
+    "chat_id": "YOUR_DEDICATED_TEST_CHAT_ID",
+    "expected_bot_id": "YOUR_DEDICATED_TEST_BOT_ID",
+    "token_keychain_service": "job-agent.synthetic-test-telegram",
+    "token_keychain_account": "test-bot",
+    "production_token_keychain_service": "job-agent.telegram",
+    "production_token_keychain_account": "worker-bot"
+  }
+}

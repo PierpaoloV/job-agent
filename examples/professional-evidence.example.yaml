@@ -1,0 +1,43 @@
+# Synthetic approved-claim bank used only as a structural example.
+schema_version: 1
+candidate: Example Candidate
+
+highlights:
+  - id: vision-pipeline
+    claim: Designed and evaluated a reproducible computer-vision training pipeline.
+    evidence: canonical-cv:experience.synthetic-laboratory
+    kind: experience
+    suitable_for:
+      - research
+      - applied_ml
+    approved: true
+
+  - id: evaluated-model
+    claim: Evaluated model performance on a held-out dataset.
+    evidence: canonical-cv:project.synthetic-evaluation
+    kind: impact
+    suitable_for:
+      - research
+      - applied_ml
+      - agentic_ai
+    approved: true
+
+skill_evidence:
+  - id: python-skill
+    claim: Uses Python and PyTorch to build reproducible machine-learning workflows.
+    evidence: canonical-cv:skills.machine-learning
+    kind: skill
+    suitable_for:
+      - research
+      - applied_ml
+      - agentic_ai
+    approved: true
+
+  - id: docker-skill
+    claim: Packages machine-learning workloads in Docker containers.
+    evidence: canonical-cv:project.container-delivery
+    kind: skill
+    suitable_for:
+      - applied_ml
+      - agentic_ai
+    approved: true

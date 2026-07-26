@@ -1,0 +1,66 @@
+profile:
+  name: Alex Example
+  title: Machine Learning Engineer
+  summary: >
+    Machine-learning engineer interested in applied AI systems.
+
+target_roles:
+  - Machine Learning Engineer
+  - AI Engineer
+  - Applied Scientist
+
+portfolio:
+  shortlist_threshold: 0.45
+  role_priority:
+    configured_order: []
+  geography:
+    primary:
+      - London
+      - Remote (Europe)
+    lower_priority:
+      - Europe (other)
+    default_location_order: []
+    global_filter: false
+  language:
+    application_process:
+      - English
+    unknown_is_eligible: true
+  excluded_title_terms: []
+  compensation:
+    hard_salary_floor: null
+    unpublished_is_eligible: true
+    base_cash_separate_from_bonus_and_equity: true
+  immigration:
+    us_sponsorship_states:
+      - yes
+      - no
+      - not_stated
+    explicit_no_enters_visa_obstacle_section: true
+  ownership:
+    excluded_current_control: []
+    requires_source_and_verification_date: true
+  risk:
+    startup_risk_is_scored_not_filtered: true
+  top_tier:
+    requires_explanation: true
+    missing_compensation_is_not_disqualifying: true
+
+salary:
+  hard_floor: null
+  unknown_eligible: true
+
+must_have_keywords:
+  - machine learning
+  - AI
+  - Python
+
+nice_to_have_keywords:
+  - research
+  - deep learning
+  - MLOps
+
+risk_keywords:
+  - staff augmentation
+  - on-call 24/7
+
+red_flag_keywords: []

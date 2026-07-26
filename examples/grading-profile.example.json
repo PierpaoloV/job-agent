@@ -1,0 +1,58 @@
+{
+  "_private_redaction_terms": [
+    "example-private-health-term"
+  ],
+  "provenance": "canonical_cv_evidence_bank",
+  "professional_summary": "Machine-learning engineer who builds reproducible computer-vision systems and works across research and production teams.",
+  "skills": [
+    "Python",
+    "PyTorch",
+    "computer vision",
+    "Docker",
+    "Git"
+  ],
+  "professional_evidence": [
+    {
+      "id": "experience.vision-pipeline",
+      "claim": "Designed and evaluated a reproducible computer-vision training pipeline.",
+      "context": "Synthetic Example Laboratory",
+      "dates": "2024-2025",
+      "skills": [
+        "Python",
+        "PyTorch",
+        "computer vision"
+      ],
+      "source_id": "canonical-cv:experience.synthetic-laboratory"
+    },
+    {
+      "id": "experience.container-delivery",
+      "claim": "Packaged a machine-learning inference service in Docker for deployment.",
+      "context": "Synthetic Example Laboratory",
+      "dates": "2025",
+      "skills": [
+        "Docker",
+        "Git"
+      ],
+      "source_id": "canonical-cv:project.container-delivery"
+    }
+  ],
+  "target_preferences": {
+    "role_tracks": [
+      "research",
+      "applied",
+      "production"
+    ],
+    "geography": [
+      "London",
+      "Remote (Europe)"
+    ],
+    "research_preference": "Configure the candidate's preferred role tracks.",
+    "language": [
+      "English"
+    ],
+    "start_date": "Configure the candidate's actual availability date.",
+    "work_authorization": "Configure for the candidate's actual citizenship and permits.",
+    "priority_companies": [],
+    "priority_teams": []
+  }
+}

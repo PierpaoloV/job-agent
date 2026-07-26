@@ -1,0 +1,23 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "job-agent-telegram-gateway",
+  "main": "src/worker.mjs",
+  "compatibility_date": "2026-07-26",
+  "workers_dev": true,
+  "observability": {
+    "enabled": true
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "job-agent-telegram-gateway",
+      "database_id": "REPLACE_AFTER_WRANGLER_D1_CREATE",
+      "migrations_dir": "migrations"
+    }
+  ],
+  "vars": {
+    "GITHUB_REPOSITORY": "OWNER/REPOSITORY",
+    "TELEGRAM_ACTOR_ID": "YOUR_TELEGRAM_USER_ID",
+    "TELEGRAM_CHAT_ID": "YOUR_TELEGRAM_CHAT_ID"
+  }
+}
