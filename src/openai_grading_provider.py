@@ -32,6 +32,7 @@ class OpenAIGradingProvider:
                     "You must use web search before answering.",
                     "Find the exact current vacancy matching the alert company, title, and location.",
                     "Use only the employer's official careers domain or its employer-specific ATS page.",
+                    "Set resolved_vacancy.company to the actual hiring employer, never the VC, portfolio job-board operator, recruiter, or ATS vendor.",
                     "Never treat LinkedIn, Glassdoor, Indeed, or another aggregator as the official vacancy.",
                     "If one exact current official vacancy cannot be established, return unavailable with null vacancy and grade.",
                     "When verified, copy the full official description and requirements faithfully, then grade against the supplied professional profile.",

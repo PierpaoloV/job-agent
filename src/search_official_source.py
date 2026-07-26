@@ -42,6 +42,9 @@ _KNOWN_ATS_HOSTS = (
 _COMPANY_SCOPED_ATS_HOSTS = (
     "jobs.gem.com",
 )
+_COMPANY_SCOPED_PORTFOLIO_HOSTS = (
+    "careers.speedinvest.com",
+)
 _HEADERS = {
     "User-Agent": (
         "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
@@ -283,6 +286,14 @@ def is_official_company_url(url: str, company: str) -> bool:
     if page_host in _COMPANY_SCOPED_ATS_HOSTS:
         path_tokens = set(re.findall(r"[a-z0-9]+", _fold(parsed.path)))
         return bool(company_tokens & path_tokens)
+    if page_host in _COMPANY_SCOPED_PORTFOLIO_HOSTS:
+        match = re.search(r"/companies/([^/]+)/jobs/", parsed.path.casefold())
+        if not match:
+            return False
+        company_slug_tokens = set(
+            re.findall(r"[a-z0-9]+", _fold(match.group(1)))
+        )
+        return bool(company_tokens & company_slug_tokens)
     if any(marker in page_host for marker in _KNOWN_ATS_HOSTS):
         return True
     return any(token in page_host for token in company_tokens)

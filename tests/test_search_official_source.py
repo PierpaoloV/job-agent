@@ -179,3 +179,17 @@ def test_gem_url_cannot_impersonate_a_different_employer():
         "https://jobs.gem.com/other-company/am9icG9zdDpX6tPeu4scKBFrmPoeoZ57",
         "Rivia",
     )
+
+
+def test_company_scoped_speedinvest_job_board_is_an_official_boundary():
+    assert is_official_company_url(
+        "https://careers.speedinvest.com/companies/rivia/jobs/67935149-senior-ai-engineer",
+        "Rivia",
+    )
+
+
+def test_speedinvest_job_board_cannot_impersonate_a_portfolio_company():
+    assert not is_official_company_url(
+        "https://careers.speedinvest.com/companies/other-company/jobs/67935149-senior-ai-engineer",
+        "Rivia",
+    )

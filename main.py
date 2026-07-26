@@ -268,18 +268,27 @@ def _accept_web_resolution(job, response):
         return None, None, "missing_title"
     if len(description) < 120:
         return None, None, "description_too_short"
-    if not _same_identity(company, str(job.get("company", ""))):
+    lead_company = str(job.get("company", "")).strip()
+    company_matches_lead = _same_identity(company, lead_company)
+    url_scoped_to_lead = is_official_company_url(
+        official_url, lead_company
+    )
+    if not company_matches_lead and not url_scoped_to_lead:
         return None, None, "company_mismatch"
+    canonical_company = company if company_matches_lead else lead_company
     if not _same_identity(title, str(job.get("title", ""))):
         return None, None, "title_mismatch"
-    if not is_official_company_url(official_url, company):
+    if not is_official_company_url(official_url, canonical_company):
         return None, None, "untrusted_official_url"
     sources = tuple(
         str(source)
         for source in grade.get("sources", ())
         if str(source).startswith("http")
     )
-    if not any(is_official_company_url(source, company) for source in sources):
+    if not any(
+        is_official_company_url(source, canonical_company)
+        for source in sources
+    ):
         return None, None, "no_trusted_grade_source"
     now = SystemClock().now().isoformat()
     official = OfficialVacancyData(
@@ -287,7 +296,7 @@ def _accept_web_resolution(job, response):
             vacancy.get("official_job_id") or official_url
         ),
         canonical_url=official_url,
-        company=company,
+        company=canonical_company,
         role=title,
         team=str(vacancy.get("team", "")),
         location=str(vacancy.get("location", "")),
@@ -325,7 +334,7 @@ def _accept_web_resolution(job, response):
         **job,
         "title": title,
         "role": title,
-        "company": company,
+        "company": canonical_company,
         "team": official.team,
         "location": official.location,
         "modality": official.modality,
