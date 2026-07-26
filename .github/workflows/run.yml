@@ -207,13 +207,26 @@ jobs:
           name: ${{ needs.ingest-and-screen.outputs.shortlist_artifact }}
           path: data/workflow
 
+      - name: Write portfolio preferences
+        env:
+          JOB_AGENT_PREFERENCES_YAML: ${{ secrets.JOB_AGENT_PREFERENCES_YAML }}
+        run: |
+          umask 077
+          mkdir -p data/hosted-inputs
+          printf '%s' "$JOB_AGENT_PREFERENCES_YAML" > data/hosted-inputs/preferences.yaml
+
       - name: Deep-grade each verified role once
         env:
           PYTHONPATH: src
+          JOB_AGENT_PREFERENCES_PATH: data/hosted-inputs/preferences.yaml
         run: >-
           python -m discovery_jobs deep-grade
           --artifact data/workflow/shortlist.json
           --output data/workflow/graded-jobs.json
+
+      - name: Clean up portfolio preferences
+        if: always()
+        run: rm -f data/hosted-inputs/preferences.yaml
 
       - name: Stage immediate alerts and due digest
         env:

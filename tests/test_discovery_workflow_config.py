@@ -147,6 +147,27 @@ def test_hosted_workflow_materializes_private_preferences_before_ingest():
     )
 
 
+def test_hosted_workflow_materializes_private_preferences_before_deep_grade():
+    text = WORKFLOW.read_text(encoding="utf-8")
+    grade = _job_block(text, "deep-grade", "handle-opportunity-decision")
+
+    assert (
+        "JOB_AGENT_PREFERENCES_YAML: "
+        "${{ secrets.JOB_AGENT_PREFERENCES_YAML }}" in grade
+    )
+    assert (
+        'printf \'%s\' "$JOB_AGENT_PREFERENCES_YAML" '
+        "> data/hosted-inputs/preferences.yaml" in grade
+    )
+    assert (
+        "JOB_AGENT_PREFERENCES_PATH: "
+        "data/hosted-inputs/preferences.yaml" in grade
+    )
+    assert (
+        "rm -f data/hosted-inputs/preferences.yaml" in grade
+    )
+
+
 def test_deep_state_is_published_before_a_candidate_can_dispatch_preparation():
     text = WORKFLOW.read_text(encoding="utf-8")
     grade = _job_block(text, "deep-grade", "handle-opportunity-decision")
