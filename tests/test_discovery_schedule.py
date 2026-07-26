@@ -285,3 +285,38 @@ def test_schedule_can_stage_for_a_local_interactive_dispatch(tmp_path):
     assert delivered.urgent_alerts_sent == 1
     assert len(notifier.alerts) == 1
     assert len(notifier.digests) == 1
+
+
+def test_staging_prunes_a_persisted_role_with_mismatched_ats_company(tmp_path):
+    clock = AdjustableClock(datetime(2026, 7, 2, 8, tzinfo=timezone.utc))
+    notifier = RecordingNotifier()
+    store = FileDiscoveryScheduleStore(tmp_path / "schedule.json")
+    identity = "linkedin:4399398799@bad-version"
+    store.save(
+        {
+            "version": "job-agent.discovery-schedule.v1",
+            "last_digest_slot": 0,
+            "known_versions": [identity],
+            "roles": {
+                identity: {
+                    "first_seen_at": clock.now().isoformat(),
+                    "digest_pending": True,
+                    "job": role(
+                        1,
+                        stable_id="linkedin:4399398799",
+                        official_vacancy_version="bad-version",
+                        company="Rivia",
+                        official_url="https://jobs.lever.co/rivr/robotics-role",
+                    ),
+                }
+            },
+            "batches": {},
+            "outbox": {},
+        }
+    )
+
+    build(tmp_path, clock, notifier).stage([])
+
+    state = store.load()
+    assert identity not in state["roles"]
+    assert identity not in state["known_versions"]

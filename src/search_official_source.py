@@ -41,6 +41,8 @@ _KNOWN_ATS_HOSTS = (
 )
 _COMPANY_SCOPED_ATS_HOSTS = (
     "jobs.gem.com",
+    "jobs.lever.co",
+    "jobs.ashbyhq.com",
 )
 _COMPANY_SCOPED_PORTFOLIO_HOSTS = (
     "careers.speedinvest.com",

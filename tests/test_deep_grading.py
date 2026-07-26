@@ -767,6 +767,67 @@ def test_web_resolution_uses_lead_company_when_scoped_board_names_operator(
     assert "status=verified, accepted=true" in capsys.readouterr().out
 
 
+def test_web_resolution_rejects_similar_company_on_another_ats_scope(
+    tmp_path, capsys
+):
+    response = valid_response()
+    response["sources"] = [
+        "https://jobs.lever.co/rivr/robotics-role",
+        "https://www.rivr.ai",
+    ]
+
+    class SimilarCompanyProvider(FakeProvider):
+        identity = "fake-web-grader"
+
+        def resolve_and_grade(self, lead, professional_profile):
+            return {
+                "resolution_status": "verified",
+                "resolved_vacancy": {
+                    "official_url": response["sources"][0],
+                    "official_job_id": "robotics-role",
+                    "title": "Senior AI Engineer Self-Supervised Learning",
+                    "company": "RIVR",
+                    "team": "Embodied AI",
+                    "location": "Zurich, Switzerland",
+                    "modality": "On-site",
+                    "seniority": "Senior",
+                    "official_description": (
+                        "RIVR is a robotics company hiring an engineer to build "
+                        "self-supervised learning systems for multimodal sensor "
+                        "data from autonomous delivery robots operating in "
+                        "complex real-world environments."
+                    ),
+                    "requirements": ["Robotics sensor-data experience"],
+                    "published_at": None,
+                    "process_language": "english",
+                },
+                "grade": response,
+            }
+
+    ranked = main.ProductionPortfolioGrader(
+        store=DeepGradeStore(tmp_path),
+        provider=SimilarCompanyProvider(),
+        profile_loader=profile,
+    ).rank(
+        [
+            vacancy(
+                stable_id="linkedin:4399398799",
+                title="Senior AI Engineer",
+                company="Rivia",
+                verification_status="needs_local_fetch",
+                official_description="",
+                screening_outcome="shortlisted",
+                source="LinkedIn",
+                url="https://www.linkedin.com/jobs/view/4399398799",
+            )
+        ],
+        10,
+    )
+
+    assert ranked == []
+    assert "reason=company_mismatch" in capsys.readouterr().out
+
+
 def test_web_resolution_unavailable_makes_no_grade(tmp_path, capsys):
     class UnavailableProvider(FakeProvider):
         identity = "fake-web-grader"

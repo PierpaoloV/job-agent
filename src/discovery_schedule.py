@@ -14,6 +14,8 @@ import json
 from pathlib import Path
 from typing import Any, Mapping, Protocol, Sequence
 
+from search_official_source import is_official_company_url
+
 
 SCHEDULE_STATE_VERSION = "job-agent.discovery-schedule.v1"
 INTERACTIVE_DELIVERY_FORMAT = "interactive-v1"
@@ -133,7 +135,12 @@ class DiscoverySchedule:
 
         now = _aware(self._clock.now(), "current time")
         state = self._store.load()
-        self._record_jobs(state, graded_jobs, now)
+        _discard_unsafe_pending(state)
+        self._record_jobs(
+            state,
+            [job for job in graded_jobs if _safe_for_delivery(job)],
+            now,
+        )
 
         self._queue_urgent_alerts(state, now)
         digest = self._queue_digest(state, now)
@@ -150,6 +157,7 @@ class DiscoverySchedule:
         """Deliver previously staged intents through the configured notifier."""
 
         state = self._store.load()
+        _discard_unsafe_pending(state)
         pending_alerts = _pending_events(state, "alert")
         pending_digests = _pending_events(state, "digest")
         sent_urgent = self._dispatch_alerts(
@@ -425,6 +433,69 @@ def _pending_events(state: Mapping[str, Any], kind: str) -> list[dict[str, Any]]
         and event.get("kind") == kind
         and event.get("status") == "pending"
     ]
+
+
+def _safe_for_delivery(job: Mapping[str, Any]) -> bool:
+    official_url = str(
+        job.get("official_url") or job.get("canonical_url") or ""
+    ).strip()
+    company = str(job.get("company") or "").strip()
+    if not official_url:
+        return True
+    return bool(company) and is_official_company_url(official_url, company)
+
+
+def _discard_unsafe_pending(state: dict[str, Any]) -> None:
+    roles = state.setdefault("roles", {})
+    unsafe_identities = {
+        identity
+        for identity, record in roles.items()
+        if isinstance(record, Mapping)
+        and isinstance(record.get("job"), Mapping)
+        and not _safe_for_delivery(record["job"])
+    }
+    for identity in unsafe_identities:
+        roles.pop(identity, None)
+    known_versions = state.setdefault("known_versions", [])
+    state["known_versions"] = [
+        identity
+        for identity in known_versions
+        if identity not in unsafe_identities
+    ]
+
+    outbox = state.setdefault("outbox", {})
+    for event_id, event in tuple(outbox.items()):
+        if (
+            not isinstance(event, Mapping)
+            or event.get("status") != "pending"
+        ):
+            continue
+        if event.get("kind") == "alert":
+            job = event.get("job")
+            if isinstance(job, Mapping) and not _safe_for_delivery(job):
+                outbox.pop(event_id, None)
+        elif event.get("kind") == "digest":
+            jobs = event.get("jobs", [])
+            if not isinstance(jobs, list):
+                continue
+            safe_jobs = [
+                job
+                for job in jobs
+                if isinstance(job, Mapping) and _safe_for_delivery(job)
+            ]
+            if not safe_jobs:
+                outbox.pop(event_id, None)
+                state.setdefault("batches", {}).pop(
+                    str(event.get("batch_id", "")),
+                    None,
+                )
+                continue
+            event["jobs"] = safe_jobs
+            batch = state.setdefault("batches", {}).get(
+                str(event.get("batch_id", ""))
+            )
+            if isinstance(batch, dict):
+                batch["jobs"] = safe_jobs
 
 
 def _identity(stable_id: str, official_version: str) -> str:

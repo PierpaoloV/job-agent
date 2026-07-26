@@ -193,3 +193,14 @@ def test_speedinvest_job_board_cannot_impersonate_a_portfolio_company():
         "https://careers.speedinvest.com/companies/other-company/jobs/67935149-senior-ai-engineer",
         "Rivia",
     )
+
+
+def test_company_scoped_lever_url_must_match_the_employer():
+    assert is_official_company_url(
+        "https://jobs.lever.co/mistral/role-id",
+        "Mistral AI",
+    )
+    assert not is_official_company_url(
+        "https://jobs.lever.co/rivr/role-id",
+        "Rivia",
+    )
