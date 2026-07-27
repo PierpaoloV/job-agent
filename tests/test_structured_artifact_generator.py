@@ -153,10 +153,16 @@ def test_generates_both_documents_and_exact_claim_traces_in_one_provider_call():
         "EDUCATION",
         "SELECTED PUBLICATIONS",
         "PUBLICATIONS",
-        "PROJECTS",
-        "Dear Hiring Team,",
-        "Sincerely,",
-    ]
+            "PROJECTS",
+            "Dear Hiring Team,",
+            "Please accept my application for this position.",
+            (
+                "I would welcome the opportunity to discuss both my experience "
+                "and the role's remaining requirements."
+            ),
+            "Thank you for your consideration.",
+            "Sincerely,",
+        ]
     assert request["approved_evidence"] == [
         {
             "id": "python-research",
@@ -167,10 +173,17 @@ def test_generates_both_documents_and_exact_claim_traces_in_one_provider_call():
             "source_reference": "master-cv:skills",
         }
     ]
-    assert generated.cv_text.startswith("Builds reproducible")
-    assert generated.cover_letter_text.startswith("I build reproducible")
+    assert generated.cv_text.startswith("CURRICULUM VITAE")
+    assert (
+        "Uses Python to build reproducible ML research pipelines."
+        in generated.cover_letter_text
+    )
+    assert len(generated.claims) == 1
     assert generated.claims[0].kind == EvidenceKind.SKILL
-    assert generated.claims[0].appears_in == (ArtifactDocument.CV,)
+    assert generated.claims[0].appears_in == (
+        ArtifactDocument.CV,
+        ArtifactDocument.COVER_LETTER,
+    )
 
 
 def test_uses_one_sonnet_structured_output_request_for_the_whole_bundle():
@@ -208,7 +221,8 @@ def test_uses_one_sonnet_structured_output_request_for_the_whole_bundle():
 
     generated = generator.generate(tailoring_request())
 
-    assert generated.cv_text.startswith("Builds reproducible")
+    assert generated.cv_text.startswith("CURRICULUM VITAE")
+    assert "Uses Python to build reproducible" in generated.cv_text
     assert len(post.calls) == 1
     url, kwargs = post.calls[0]
     assert url == "https://api.anthropic.com/v1/messages"
@@ -273,6 +287,44 @@ def test_deterministic_audit_rejects_fabrication_citing_a_same_kind_record():
 
     assert audit.complete is True
     assert audit.unsupported_claims == (fabricated,)
+
+
+def test_generator_rebuilds_documents_from_exact_evidence_when_model_adds_prose():
+    approved = "Uses Python to build reproducible ML research pipelines."
+    provider = RecordingProvider(
+        {
+            "cv_text": (
+                "AI researcher with extensive production experience.\n"
+                + approved
+            ),
+            "cover_letter_text": (
+                "I am the ideal candidate for this role.\n" + approved
+            ),
+            "claims": [
+                {
+                    "statement": approved,
+                    "kind": "skill",
+                    "evidence_ids": ["python-research"],
+                    "appears_in": ["cv", "cover_letter"],
+                }
+            ],
+        }
+    )
+
+    generated = StructuredArtifactGenerator(
+        provider,
+        candidate_name="Synthetic Candidate",
+    ).generate(tailoring_request())
+
+    assert len(provider.requests) == 1
+    assert "extensive production experience" not in generated.cv_text
+    assert "ideal candidate" not in generated.cover_letter_text
+    assert approved in generated.cv_text
+    assert approved in generated.cover_letter_text
+    audit = DeterministicClaimAuditor(
+        structural_lines=("Synthetic Candidate",)
+    ).audit(generated, tailoring_request().evidence)
+    assert audit.unsupported_claims == ()
 
 
 def test_production_composition_builds_one_private_versioned_pdf_bundle(tmp_path):

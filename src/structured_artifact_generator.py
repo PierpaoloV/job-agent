@@ -114,7 +114,7 @@ class StructuredArtifactGenerator:
             _generation_request(request, candidate_name=self._candidate_name)
         )
         payload = json.loads(raw) if isinstance(raw, str) else dict(raw)
-        claims = tuple(
+        proposed_claims = tuple(
             MaterialClaim(
                 statement=str(item["statement"]),
                 kind=str(item["kind"]),
@@ -123,10 +123,10 @@ class StructuredArtifactGenerator:
             )
             for item in payload["claims"]
         )
-        return GeneratedArtifactBundle(
-            cv_text=str(payload["cv_text"]),
-            cover_letter_text=str(payload["cover_letter_text"]),
-            claims=claims,
+        return _rebuild_from_approved_evidence(
+            request,
+            proposed_claims=proposed_claims,
+            candidate_name=self._candidate_name,
         )
 
 
@@ -236,6 +236,86 @@ def _generation_request(
     }
 
 
+def _rebuild_from_approved_evidence(
+    request: TailoringRequest,
+    *,
+    proposed_claims: tuple[MaterialClaim, ...],
+    candidate_name: str,
+) -> GeneratedArtifactBundle:
+    """Treat model prose as a selection hint, never as publishable evidence."""
+
+    approved = {item.evidence_id: item for item in request.evidence if item.approved}
+    selected_ids: list[str] = []
+    for claim in proposed_claims:
+        if len(claim.evidence_ids) != 1:
+            continue
+        evidence_id = claim.evidence_ids[0]
+        record = approved.get(evidence_id)
+        if (
+            record is None
+            or claim.statement != record.approved_statement
+            or claim.kind not in record.kinds
+        ):
+            continue
+        if evidence_id not in selected_ids:
+            selected_ids.append(evidence_id)
+    for record in request.evidence:
+        if record.approved and record.evidence_id not in selected_ids:
+            selected_ids.append(record.evidence_id)
+
+    claims = tuple(
+        MaterialClaim(
+            statement=approved[evidence_id].approved_statement,
+            kind=approved[evidence_id].kinds[0],
+            evidence_ids=(evidence_id,),
+            appears_in=(
+                ArtifactDocument.CV,
+                ArtifactDocument.COVER_LETTER,
+            ),
+        )
+        for evidence_id in selected_ids
+    )
+    cv_lines = ["CURRICULUM VITAE"]
+    if candidate_name:
+        cv_lines.append(candidate_name)
+    headings = (
+        ("EXPERIENCE", "experience"),
+        ("SELECTED IMPACT", "impact"),
+        ("SKILLS", "skill"),
+    )
+    for heading, kind in headings:
+        statements = [
+            claim.statement for claim in claims if claim.kind.value == kind
+        ]
+        if statements:
+            cv_lines.extend(("", heading, *statements))
+
+    cover_lines = [
+        "Dear Hiring Team,",
+        "",
+        "Please accept my application for this position.",
+        "",
+    ]
+    for claim in claims:
+        cover_lines.extend((claim.statement, ""))
+    if request.stretch_decision.is_stretch:
+        cover_lines.extend(
+            (
+                "I would welcome the opportunity to discuss both my experience "
+                "and the role's remaining requirements.",
+                "",
+            )
+        )
+    cover_lines.extend(("Thank you for your consideration.", "", "Sincerely,"))
+    if candidate_name:
+        cover_lines.append(candidate_name)
+    return GeneratedArtifactBundle(
+        cv_text="\n".join(cv_lines).strip(),
+        cover_letter_text="\n".join(cover_lines).strip(),
+        claims=claims,
+    )
+
+
 __all__ = [
     "AnthropicArtifactProvider",
     "ArtifactGenerationProvider",
@@ -268,6 +348,12 @@ _STANDARD_STRUCTURAL_LINES = (
     "PUBLICATIONS",
     "PROJECTS",
     "Dear Hiring Team,",
+    "Please accept my application for this position.",
+    (
+        "I would welcome the opportunity to discuss both my experience "
+        "and the role's remaining requirements."
+    ),
+    "Thank you for your consideration.",
     "Sincerely,",
 )
 
