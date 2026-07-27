@@ -104,6 +104,29 @@ export class D1GatewayStore {
       : null;
   }
 
+  async getExpiredAuthorization(token, scope, observedAt) {
+    const row = await this.database
+      .prepare(
+        "SELECT group_key, application_id, vacancy_version FROM " +
+          "callback_authorizations WHERE token = ?1 AND status = 'issued' " +
+          "AND actor_id = ?2 AND chat_id = ?3 AND expires_at <= ?4",
+      )
+      .bind(
+        token,
+        scope.actorId,
+        scope.chatId,
+        observedAt,
+      )
+      .first();
+    return row
+      ? {
+          groupKey: String(row.group_key),
+          applicationId: String(row.application_id),
+          vacancyVersion: String(row.vacancy_version),
+        }
+      : null;
+  }
+
   async releaseAuthorization(token) {
     const result = await this.database
       .prepare(
@@ -309,6 +332,7 @@ export function createGateway({
           storeFactory(env),
           now,
           fetchImpl,
+          tokenFactory,
         );
       }
       return json({ error: "not_found" }, 404);
@@ -340,19 +364,16 @@ async function issueAuthorizations(
     return json({ error: parsed.error }, 400);
   }
   const createdAt = now();
-  const expiresAt = new Date(
-    createdAt.getTime() + AUTHORIZATION_TTL_MS,
-  ).toISOString();
-  const records = ACTIONS.map(([action]) => ({
-    token: tokenFactory(),
-    action,
-    applicationId: parsed.value.applicationId,
-    vacancyVersion: parsed.value.vacancyVersion,
-    actorId: parsed.value.actorId,
-    chatId: parsed.value.chatId,
-    createdAt: createdAt.toISOString(),
-    expiresAt,
-  }));
+  const records = authorizationRecords(
+    {
+      applicationId: parsed.value.applicationId,
+      vacancyVersion: parsed.value.vacancyVersion,
+      actorId: parsed.value.actorId,
+      chatId: parsed.value.chatId,
+    },
+    createdAt,
+    tokenFactory,
+  );
   const issued = await store.issueAuthorizationSet(
     parsed.value.eventId,
     records,
@@ -360,18 +381,21 @@ async function issueAuthorizations(
   if (issued.length !== ACTIONS.length) {
     return json({ error: "authorization_set_incomplete" }, 503);
   }
-  const labels = new Map(ACTIONS);
   return json({
-    buttons: issued.map((record) => ({
-      text: labels.get(record.action),
-      callback_data: `${CALLBACK_PREFIX}${record.token}`,
-    })),
+    buttons: roleButtons(issued),
     expires_at: issued[0].expiresAt,
   });
 }
 
 
-async function acceptTelegramUpdate(request, env, store, now, fetchImpl) {
+async function acceptTelegramUpdate(
+  request,
+  env,
+  store,
+  now,
+  fetchImpl,
+  tokenFactory,
+) {
   const suppliedSecret =
     request.headers.get("x-telegram-bot-api-secret-token") || "";
   if (
@@ -433,6 +457,22 @@ async function acceptTelegramUpdate(request, env, store, now, fetchImpl) {
     receivedAt,
   );
   if (!authorization) {
+    const expired = await store.getExpiredAuthorization(
+      callback.value.token,
+      expectedScope,
+      receivedAt,
+    );
+    if (expired) {
+      return refreshExpiredRoleCard(
+        callback.value,
+        expired,
+        env,
+        store,
+        now,
+        fetchImpl,
+        tokenFactory,
+      );
+    }
     await store.markUpdate(
       callback.value.updateId,
       "rejected",
@@ -505,6 +545,71 @@ async function acceptTelegramUpdate(request, env, store, now, fetchImpl) {
     "Ricevuto",
   );
   return json({ accepted: true });
+}
+
+
+async function refreshExpiredRoleCard(
+  callback,
+  expired,
+  env,
+  store,
+  now,
+  fetchImpl,
+  tokenFactory,
+) {
+  const createdAt = now();
+  const records = authorizationRecords(
+    {
+      applicationId: expired.applicationId,
+      vacancyVersion: expired.vacancyVersion,
+      actorId: callback.actorId,
+      chatId: callback.chatId,
+    },
+    createdAt,
+    tokenFactory,
+  );
+  const groupKey = [
+    "refresh",
+    callback.updateId,
+    expired.groupKey,
+  ].join(":");
+  let issued;
+  try {
+    issued = await store.issueAuthorizationSet(groupKey, records);
+    if (issued.length !== ACTIONS.length) {
+      throw new Error("authorization_set_incomplete");
+    }
+    await editRoleButtons(fetchImpl, env, {
+      chatId: callback.chatId,
+      messageId: callback.messageId,
+      buttons: roleButtons(issued),
+    });
+  } catch (error) {
+    await store.markUpdate(
+      callback.updateId,
+      "uncertain",
+      `expired_callback_refresh_failed:${String(error)}`,
+    );
+    await answerCallback(
+      fetchImpl,
+      env,
+      callback.callbackId,
+      "Impossibile aggiornare il pulsante",
+    );
+    return json({ accepted: true });
+  }
+  await store.markUpdate(
+    callback.updateId,
+    "refreshed",
+    expired.groupKey,
+  );
+  await answerCallback(
+    fetchImpl,
+    env,
+    callback.callbackId,
+    "Pulsante aggiornato: premi di nuovo",
+  );
+  return json({ accepted: true, refreshed: true });
 }
 
 
@@ -784,9 +889,11 @@ function parseCallback(update) {
   const callbackId = cleanString(query?.id, 256);
   const actorId = integerId(query?.from?.id);
   const chatId = integerId(query?.message?.chat?.id);
+  const messageId = query?.message?.message_id;
   const data = cleanString(query?.data, 64);
   if (
     !Number.isSafeInteger(updateId) ||
+    !Number.isSafeInteger(messageId) ||
     !callbackId ||
     !actorId ||
     !chatId ||
@@ -800,7 +907,14 @@ function parseCallback(update) {
   }
   return {
     ok: true,
-    value: { updateId, callbackId, actorId, chatId, token },
+    value: {
+      updateId,
+      callbackId,
+      actorId,
+      chatId,
+      messageId,
+      token,
+    },
   };
 }
 
@@ -865,6 +979,45 @@ async function answerCallback(fetchImpl, env, callbackId, text) {
 }
 
 
+async function editRoleButtons(
+  fetchImpl,
+  env,
+  { chatId, messageId, buttons },
+) {
+  let response;
+  try {
+    response = await fetchImpl(
+      `https://api.telegram.org/bot${required(
+        env,
+        "TELEGRAM_BOT_TOKEN",
+      )}/editMessageReplyMarkup`,
+      {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          chat_id: chatId,
+          message_id: messageId,
+          reply_markup: {
+            inline_keyboard: [buttons],
+          },
+        }),
+      },
+    );
+  } catch (error) {
+    throw error;
+  }
+  let body;
+  try {
+    body = await response.json();
+  } catch {
+    throw new Error("Telegram returned invalid JSON");
+  }
+  if (response.ok !== true || body?.ok !== true) {
+    throw new Error("Telegram rejected editMessageReplyMarkup");
+  }
+}
+
+
 async function sendTelegramMessage(fetchImpl, env, payload) {
   let response;
   try {
@@ -902,6 +1055,32 @@ async function sendTelegramMessage(fetchImpl, env, payload) {
     throw error;
   }
   return messageId;
+}
+
+
+function authorizationRecords(scope, createdAt, tokenFactory) {
+  const expiresAt = new Date(
+    createdAt.getTime() + AUTHORIZATION_TTL_MS,
+  ).toISOString();
+  return ACTIONS.map(([action]) => ({
+    token: tokenFactory(),
+    action,
+    applicationId: scope.applicationId,
+    vacancyVersion: scope.vacancyVersion,
+    actorId: scope.actorId,
+    chatId: scope.chatId,
+    createdAt: createdAt.toISOString(),
+    expiresAt,
+  }));
+}
+
+
+function roleButtons(records) {
+  const labels = new Map(ACTIONS);
+  return records.map((record) => ({
+    text: labels.get(record.action),
+    callback_data: `${CALLBACK_PREFIX}${record.token}`,
+  }));
 }
 
 

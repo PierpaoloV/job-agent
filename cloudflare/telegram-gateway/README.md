@@ -12,6 +12,9 @@ It exposes:
 
 D1 stores callback capabilities and Telegram update IDs so one click can
 produce at most one `telegram-opportunity-decision` repository dispatch.
+When a role button has expired, the expired click produces no GitHub dispatch:
+the Worker rotates all three controls on the same Telegram card and asks the
+owner to press the intended action again.
 `👎` first opens a force-reply question. Its lifecycle exists in D1 before the
 prompt is sent, and the owner's exact reply is stored in D1 before GitHub
 dispatch.

@@ -45,6 +45,28 @@ class MemoryStore {
     return { ...record };
   }
 
+  async getExpiredAuthorization(token, scope, observedAt) {
+    const entry = [...this.groups.entries()]
+      .flatMap(([groupKey, records]) =>
+        records.map((record) => ({ groupKey, record })),
+      )
+      .find(
+        ({ record }) =>
+          record.token === token &&
+          record.status !== "consumed" &&
+          record.actorId === scope.actorId &&
+          record.chatId === scope.chatId &&
+          new Date(record.expiresAt) <= new Date(observedAt),
+      );
+    return entry
+      ? {
+          groupKey: entry.groupKey,
+          applicationId: entry.record.applicationId,
+          vacancyVersion: entry.record.vacancyVersion,
+        }
+      : null;
+  }
+
   async releaseAuthorization(token) {
     const record = [...this.groups.values()]
       .flat()
@@ -271,7 +293,10 @@ test("valid Telegram callback dispatches the exact decision to GitHub once", asy
     callback_query: {
       id: "callback-4242",
       from: { id: 123456789 },
-      message: { chat: { id: 123456789 } },
+      message: {
+        message_id: 4242,
+        chat: { id: 123456789 },
+      },
       data: callbackData,
     },
   };
@@ -322,6 +347,94 @@ test("valid Telegram callback dispatches the exact decision to GitHub once", asy
     callback_query_id: "callback-4242",
     text: "Ricevuto",
   });
+});
+
+
+test("expired role button refreshes the same card without dispatching", async () => {
+  const store = new MemoryStore();
+  const calls = [];
+  let sequence = 0;
+  let current = new Date("2026-07-26T10:00:00Z");
+  const gateway = createGateway({
+    storeFactory: () => store,
+    tokenFactory: () => `refresh-token-${++sequence}`,
+    now: () => current,
+    fetchImpl: async (url, options) => {
+      calls.push({ url: String(url), options });
+      if (String(url).includes("api.github.com")) {
+        return new Response(null, { status: 204 });
+      }
+      return Response.json({ ok: true, result: true });
+    },
+  });
+  const authorization = await issueTestAuthorization(
+    gateway,
+    "expired-role-card",
+  );
+  const expiredToken = (
+    await authorization.json()
+  ).buttons[0].callback_data.slice("ja1:".length);
+  current = new Date("2026-07-26T10:16:00Z");
+
+  const response = await gateway.fetch(
+    callbackRequest({
+      updateId: 43,
+      messageId: 700,
+      token: expiredToken,
+    }),
+    env,
+  );
+
+  assert.equal(response.status, 200);
+  assert.equal(
+    calls.filter(({ url }) => url.includes("api.github.com")).length,
+    0,
+  );
+  const edit = calls.find(({ url }) =>
+    url.endsWith("/editMessageReplyMarkup"),
+  );
+  assert.ok(edit);
+  const editPayload = JSON.parse(edit.options.body);
+  assert.equal(editPayload.chat_id, "123456789");
+  assert.equal(editPayload.message_id, 700);
+  assert.deepEqual(
+    editPayload.reply_markup.inline_keyboard[0].map(
+      (button) => button.text,
+    ),
+    ["👍", "👎", "Dimmi di più"],
+  );
+  assert.ok(
+    editPayload.reply_markup.inline_keyboard[0].every(
+      (button) =>
+        button.callback_data.startsWith("ja1:refresh-token-") &&
+        button.callback_data.length <= 64 &&
+        button.callback_data !== `ja1:${expiredToken}`,
+    ),
+  );
+  assert.equal(store.updates.get(43).status, "refreshed");
+  const answer = calls.find(({ url }) =>
+    url.endsWith("/answerCallbackQuery"),
+  );
+  assert.equal(
+    JSON.parse(answer.options.body).text,
+    "Pulsante aggiornato: premi di nuovo",
+  );
+
+  const freshToken = editPayload.reply_markup.inline_keyboard[0][0]
+    .callback_data.slice("ja1:".length);
+  await gateway.fetch(
+    callbackRequest({
+      updateId: 44,
+      messageId: 700,
+      token: freshToken,
+    }),
+    env,
+  );
+  const githubCalls = calls.filter(({ url }) =>
+    url.includes("api.github.com"),
+  );
+  assert.equal(githubCalls.length, 1);
+  assert.equal(store.updates.get(44).status, "dispatched");
 });
 
 
@@ -688,6 +801,7 @@ function callbackRequest({
   updateId,
   actorId = 123456789,
   chatId = 123456789,
+  messageId = 1,
   token,
 }) {
   return new Request("https://gateway.test/telegram", {
@@ -701,7 +815,10 @@ function callbackRequest({
       callback_query: {
         id: `callback-${updateId}`,
         from: { id: actorId },
-        message: { chat: { id: chatId } },
+        message: {
+          message_id: messageId,
+          chat: { id: chatId },
+        },
         data: `ja1:${token}`,
       },
     }),
