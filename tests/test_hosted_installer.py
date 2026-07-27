@@ -21,8 +21,47 @@ def write_config(tmp_path: Path, *, secret_marker: str = "") -> Path:
     evidence = tmp_path / "professional-evidence.yaml"
     preferences = tmp_path / "preferences.yaml"
     cv = tmp_path / "curriculum-vitae.pdf"
-    for path in (credentials, token, profile, evidence, preferences, cv):
+    for path in (credentials, token, preferences, cv):
         path.write_text("synthetic", encoding="utf-8")
+    profile.write_text(
+        json.dumps(
+            {
+                "provenance": "canonical_cv_evidence_bank",
+                "professional_summary": "Synthetic machine-learning engineer.",
+                "skills": ["Python"],
+                "professional_evidence": [
+                    {
+                        "id": "experience.synthetic",
+                        "claim": "Built a synthetic machine-learning pipeline.",
+                        "context": "Synthetic laboratory",
+                        "dates": "2025",
+                        "skills": ["Python"],
+                        "source_id": "canonical-cv:experience.synthetic",
+                    }
+                ],
+                "target_preferences": {},
+            }
+        ),
+        encoding="utf-8",
+    )
+    evidence.write_text(
+        yaml.safe_dump(
+            {
+                "highlights": [
+                    {
+                        "id": "experience.synthetic",
+                        "kind": "experience",
+                        "claim": "Built a synthetic machine-learning pipeline.",
+                        "evidence": "Synthetic canonical CV.",
+                        "suitable_for": ["research"],
+                    }
+                ],
+                "skill_evidence": [],
+            },
+            sort_keys=False,
+        ),
+        encoding="utf-8",
+    )
 
     config = {
         "version": 1,
@@ -341,6 +380,29 @@ def test_hosted_doctor_reports_actionable_missing_prerequisites_and_config(
     assert "[FAIL] environment TEST_OPENAI_KEY: not set" in result.stdout
     assert "[FAIL] environment TEST_TELEGRAM_TOKEN: not set" in result.stdout
     assert "Run `job-agent hosted doctor --config" in result.stdout
+
+
+def test_hosted_doctor_rejects_drift_between_grading_and_artifact_evidence(
+    tmp_path: Path,
+):
+    config_path = write_config(tmp_path)
+    config = yaml.safe_load(config_path.read_text(encoding="utf-8"))
+    profile_path = Path(config["profile"]["grading_profile_file"])
+    profile = json.loads(profile_path.read_text(encoding="utf-8"))
+    profile["professional_evidence"][0]["id"] = "experience.only-in-grading"
+    profile_path.write_text(json.dumps(profile), encoding="utf-8")
+
+    result = run_cli(
+        "hosted",
+        "doctor",
+        "--config",
+        str(config_path),
+        env={**os.environ, "PATH": os.environ.get("PATH", "")},
+    )
+
+    assert result.returncode == 1
+    assert "[FAIL] grading/artifact evidence alignment:" in result.stdout
+    assert "same approved professional evidence IDs and claims" in result.stdout
 
 
 def test_non_dry_init_runs_preflight_before_any_provisioning(tmp_path: Path):

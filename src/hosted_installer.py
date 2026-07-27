@@ -1025,6 +1025,20 @@ def run_doctor(
                 str(path) if exists else f"{path} does not exist",
             )
         )
+    grading_profile = config.path("profile", "grading_profile_file")
+    professional_evidence = config.path("profile", "evidence_file")
+    if grading_profile.exists() and professional_evidence.exists():
+        aligned, detail = validate_professional_evidence_alignment(
+            grading_profile,
+            professional_evidence,
+        )
+        checks.append(
+            DoctorCheck(
+                "grading/artifact evidence alignment",
+                aligned,
+                detail,
+            )
+        )
     for name in config.secret_environment_names():
         present = bool(environment.get(name))
         checks.append(
@@ -1035,6 +1049,68 @@ def run_doctor(
             )
         )
     return DoctorReport(tuple(checks))
+
+
+def validate_professional_evidence_alignment(
+    grading_profile_path: Path,
+    evidence_path: Path,
+) -> tuple[bool, str]:
+    """Ensure grading and tailoring authorize the same exact claim bank."""
+
+    try:
+        profile = json.loads(Path(grading_profile_path).read_text(encoding="utf-8"))
+        evidence = yaml.safe_load(Path(evidence_path).read_text(encoding="utf-8"))
+        grading_claims = _grading_claims(profile)
+        artifact_claims = _artifact_claims(evidence)
+    except (OSError, TypeError, ValueError, json.JSONDecodeError, yaml.YAMLError):
+        return False, "professional evidence inputs are malformed"
+    if grading_claims != artifact_claims:
+        return (
+            False,
+            "grading and tailoring must use the same approved professional "
+            "evidence IDs and claims",
+        )
+    if not grading_claims:
+        return False, "professional evidence inputs must not be empty"
+    return True, f"{len(grading_claims)} approved claims aligned"
+
+
+def _grading_claims(value: Any) -> dict[str, str]:
+    if not isinstance(value, Mapping):
+        raise ValueError("grading profile must be an object")
+    rows = value.get("professional_evidence")
+    if not isinstance(rows, list):
+        raise ValueError("grading profile evidence must be a list")
+    return _claim_map(rows)
+
+
+def _artifact_claims(value: Any) -> dict[str, str]:
+    if not isinstance(value, Mapping):
+        raise ValueError("artifact evidence must be an object")
+    rows: list[Any] = []
+    for section in ("highlights", "skill_evidence"):
+        section_rows = value.get(section, [])
+        if not isinstance(section_rows, list):
+            raise ValueError("artifact evidence sections must be lists")
+        rows.extend(
+            row
+            for row in section_rows
+            if isinstance(row, Mapping) and row.get("approved", True) is True
+        )
+    return _claim_map(rows)
+
+
+def _claim_map(rows: Sequence[Any]) -> dict[str, str]:
+    result: dict[str, str] = {}
+    for row in rows:
+        if not isinstance(row, Mapping):
+            raise ValueError("professional evidence entries must be objects")
+        identifier = str(row.get("id", "")).strip()
+        claim = str(row.get("claim", "")).strip()
+        if not identifier or not claim or identifier in result:
+            raise ValueError("professional evidence IDs and claims must be canonical")
+        result[identifier] = claim
+    return result
 
 
 def default_state_path(config: HostedConfig) -> Path:
