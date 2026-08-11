@@ -125,15 +125,27 @@ class TelegramWorkerHttpApi:
                 timeout=timeout + 5,
             )
             payload = response.json()
-        except Exception:
-            raise RuntimeError("Telegram worker polling failed safely") from None
+        except Exception as error:
+            raise RuntimeError(
+                "Telegram worker polling failed safely "
+                f"(transport={type(error).__name__})"
+            ) from None
         if (
             not getattr(response, "ok", False)
             or not isinstance(payload, Mapping)
             or payload.get("ok") is not True
             or not isinstance(payload.get("result"), list)
         ):
-            raise RuntimeError("Telegram worker polling failed safely")
+            status_code = getattr(response, "status_code", "unknown")
+            error_code = (
+                payload.get("error_code", "unknown")
+                if isinstance(payload, Mapping)
+                else "unknown"
+            )
+            raise RuntimeError(
+                "Telegram worker polling failed safely "
+                f"(http_status={status_code}, error_code={error_code})"
+            )
         return [dict(item) for item in payload["result"] if isinstance(item, Mapping)]
 
     def send_status(self, text: str) -> None:

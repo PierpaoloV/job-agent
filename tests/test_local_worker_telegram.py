@@ -22,7 +22,39 @@ from local_worker_telegram import (
     CallbackRoute,
     LocalWorkerTelegramRouter,
     TelegramUpdateStore,
+    TelegramWorkerHttpApi,
 )
+
+
+def test_poll_failure_reports_only_safe_http_diagnostics():
+    class Response:
+        ok = False
+        status_code = 409
+
+        def json(self):
+            return {
+                "ok": False,
+                "error_code": 409,
+                "description": "sensitive upstream detail",
+            }
+
+    class Http:
+        @staticmethod
+        def get(*args, **kwargs):
+            return Response()
+
+    api = TelegramWorkerHttpApi(
+        token="secret-token", chat_id="99", http=Http()
+    )
+
+    with pytest.raises(RuntimeError) as failure:
+        api.poll_updates(offset=None, timeout=0)
+
+    message = str(failure.value)
+    assert "http_status=409" in message
+    assert "error_code=409" in message
+    assert "sensitive upstream detail" not in message
+    assert "secret-token" not in message
 
 
 def test_callback_authorization_is_scoped_short_lived_and_one_use(tmp_path):
