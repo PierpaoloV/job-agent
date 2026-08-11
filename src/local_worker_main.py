@@ -568,6 +568,7 @@ def build_local_worker(
     logger: WorkerLogger | None = None,
     reconciliation_verifiers: Mapping[str, CapabilityReconciliationVerifier]
     | None = None,
+    safe_retry_capabilities: Mapping[str, str] | None = None,
 ) -> LocalWorker:
     """Compose injected production adapters without creating external clients."""
 
@@ -581,13 +582,13 @@ def build_local_worker(
             poll_timeout=telegram_poll_timeout,
         )
     wired.update(capabilities or {})
-    safe_retry_capabilities = {
+    authorized_retries = {
         name: evidence
-        for name, evidence in _IDEMPOTENT_BACKGROUND_RETRY_EVIDENCE.items()
+        for name, evidence in (safe_retry_capabilities or {}).items()
         if name in wired
     }
     if telegram_router is not None:
-        safe_retry_capabilities["telegram"] = (
+        authorized_retries["telegram"] = (
             "The outer Telegram capability only polls updates; "
             "callback effects use separate durable capability claims"
         )
@@ -596,7 +597,7 @@ def build_local_worker(
         capabilities=wired,
         logger=logger,
         reconciliation_verifiers=reconciliation_verifiers,
-        safe_retry_capabilities=safe_retry_capabilities,
+        safe_retry_capabilities=authorized_retries,
     )
 
 
@@ -1030,6 +1031,11 @@ def build_production_runtime(
             )
         ),
         reconciliation_verifiers=reconciliation_verifiers,
+        safe_retry_capabilities={
+            name: evidence
+            for name, evidence in _IDEMPOTENT_BACKGROUND_RETRY_EVIDENCE.items()
+            if name in background_capabilities
+        },
     )
     control.bind(worker)
     return ProductionApplicationWorkerRuntime(

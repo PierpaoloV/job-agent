@@ -973,6 +973,52 @@ def test_one_invalid_web_grade_does_not_block_other_verified_roles(
     assert "example:invalid: status=contract_error" in capsys.readouterr().out
 
 
+def test_one_invalid_verified_grade_does_not_block_another_role(
+    tmp_path,
+    capsys,
+):
+    invalid = valid_response()
+    invalid["requirements_evidence_matrix"]["rows"] = []
+
+    class SequentialProvider(FakeProvider):
+        def __init__(self):
+            super().__init__()
+            self.responses = [invalid, valid_response()]
+
+        def complete(self, request):
+            self.calls.append(request)
+            return self.responses.pop(0)
+
+    ranked = main.ProductionPortfolioGrader(
+        store=DeepGradeStore(tmp_path),
+        provider=SequentialProvider(),
+        profile_loader=profile,
+    ).rank(
+        [
+            vacancy(stable_id="example:invalid"),
+            vacancy(stable_id="example:valid"),
+        ],
+        10,
+    )
+
+    assert [item["stable_id"] for item in ranked] == ["example:valid"]
+    assert "example:invalid: status=contract_error" in capsys.readouterr().out
+
+
+def test_single_invalid_verified_grade_is_isolated(tmp_path, capsys):
+    invalid = valid_response()
+    invalid["requirements_evidence_matrix"]["rows"] = []
+
+    ranked = main.ProductionPortfolioGrader(
+        store=DeepGradeStore(tmp_path),
+        provider=FakeProvider(invalid),
+        profile_loader=profile,
+    ).rank([vacancy()], 10)
+
+    assert ranked == []
+    assert "status=contract_error" in capsys.readouterr().out
+
+
 def test_all_web_provider_errors_fail_the_batch(tmp_path):
     class FailingProvider(FakeProvider):
         identity = "fake-web-grader"

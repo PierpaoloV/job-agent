@@ -156,6 +156,10 @@ def test_composition_recovers_idempotent_background_envelopes_only(tmp_path):
                 "applications",
             )
         },
+        safe_retry_capabilities={
+            "application_preparations": "test-proven idempotent",
+            "discovery_notifications": "test-proven idempotent",
+        },
     )
 
     status = worker.run_once()
@@ -165,6 +169,45 @@ def test_composition_recovers_idempotent_background_envelopes_only(tmp_path):
     assert {
         decision.capability for decision in store.reconciliation_audit()
     } == {"application_preparations", "discovery_notifications"}
+
+
+def test_composition_does_not_infer_retry_safety_from_capability_name(tmp_path):
+    state_path = tmp_path / "worker-state.json"
+    store = LocalWorkerStore(state_path)
+    attempt = store.claim_capability(
+        "application_preparations",
+        0,
+        owner="terminated-worker",
+        lease_duration=timedelta(minutes=5),
+    )
+    assert attempt.claim is not None
+    store.mark_capability_uncertain(attempt.claim)
+    events = []
+
+    class ReplacementCapability:
+        def recompute(self, resume_generation):
+            return None
+
+        def run_once(self, execution):
+            events.append("unexpected replay")
+
+        def status(self):
+            return {"state": "ready", "healthy": True}
+
+    worker = build_local_worker(
+        state_path=state_path,
+        capabilities={
+            "application_preparations": ReplacementCapability(),
+        },
+    )
+
+    status = worker.run_once()
+
+    assert events == []
+    assert status["capabilities"]["application_preparations"]["state"] == (
+        "uncertain"
+    )
+    assert store.reconciliation_audit() == ()
 
 
 def test_preparation_reconciler_advances_each_intent_once_without_polling_loop():
