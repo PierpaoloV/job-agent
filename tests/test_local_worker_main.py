@@ -113,6 +113,60 @@ def test_composition_recovers_only_the_safe_telegram_poll_envelope(tmp_path):
     assert audit[0].actor == "system:worker"
 
 
+def test_composition_recovers_idempotent_background_envelopes_only(tmp_path):
+    state_path = tmp_path / "worker-state.json"
+    store = LocalWorkerStore(state_path)
+    for capability in (
+        "application_preparations",
+        "discovery_notifications",
+        "applications",
+    ):
+        attempt = store.claim_capability(
+            capability,
+            0,
+            owner="terminated-worker",
+            lease_duration=timedelta(minutes=5),
+        )
+        assert attempt.claim is not None
+        store.mark_capability_uncertain(attempt.claim)
+
+    events = []
+
+    class Capability:
+        def __init__(self, name):
+            self.name = name
+
+        def recompute(self, resume_generation):
+            return None
+
+        def run_once(self, execution):
+            execution.checkpoint()
+            events.append(self.name)
+
+        def status(self):
+            return {"state": "ready", "healthy": True}
+
+    worker = build_local_worker(
+        state_path=state_path,
+        capabilities={
+            name: Capability(name)
+            for name in (
+                "application_preparations",
+                "discovery_notifications",
+                "applications",
+            )
+        },
+    )
+
+    status = worker.run_once()
+
+    assert events == ["application_preparations", "discovery_notifications"]
+    assert status["capabilities"]["applications"]["state"] == "uncertain"
+    assert {
+        decision.capability for decision in store.reconciliation_audit()
+    } == {"application_preparations", "discovery_notifications"}
+
+
 def test_preparation_reconciler_advances_each_intent_once_without_polling_loop():
     events = []
 
@@ -1090,5 +1144,13 @@ def test_production_factory_shares_application_issuer_and_worker_route(tmp_path)
     assert acknowledgements == [("callback-1", "completed")]
 
 
-def test_default_cli_exits_successfully_when_local_config_is_absent(tmp_path):
-    assert main(["--state-path", str(tmp_path / "state.json")]) == 0
+def test_default_cli_reports_disabled_health_when_local_config_is_absent(
+    tmp_path, capsys
+):
+    assert main(["--once", "--state-path", str(tmp_path / "state.json")]) == 1
+    assert json.loads(capsys.readouterr().out) == {
+        "capabilities": {},
+        "health": "disabled",
+        "reason": "configuration_missing",
+        "state": "stop",
+    }

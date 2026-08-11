@@ -16,6 +16,7 @@ from portfolio_policy import LocalPortfolioScreener, PortfolioPolicy
 from deep_grading import (
     DeepGradeStore,
     DeepGradingService,
+    GradingContractError,
     SanitizedProfessionalProfile,
 )
 from opportunity_domain import OfficialVacancyData, OfficialVacancySnapshot
@@ -119,6 +120,8 @@ class ProductionPortfolioGrader:
         graded = []
         web_attempts = 0
         web_responses = 0
+        grade_attempts = 0
+        contract_failures = 0
         for job in jobs:
             grading_job = {
                 **job,
@@ -132,8 +135,17 @@ class ProductionPortfolioGrader:
                 grading_job.get("verification_status")
             )
             if state == VerificationState.VERIFIED:
-                result = service.grade_if_eligible(grading_job, profile)
                 resolved_job = grading_job
+                grade_attempts += 1
+                try:
+                    result = service.grade_if_eligible(grading_job, profile)
+                except GradingContractError:
+                    contract_failures += 1
+                    print(
+                        "Deep grading "
+                        f"{grading_job['stable_id']}: status=contract_error"
+                    )
+                    continue
             elif (
                 state == VerificationState.NEEDS_LOCAL_FETCH
                 and screening_outcome(
@@ -184,14 +196,24 @@ class ProductionPortfolioGrader:
                     resolved_job.get("requirements", ()),
                     profile,
                 )
-                result = DeepGradingService(
-                    provider=_PreloadedGradeProvider(
-                        raw_grade,
-                        identity=f"{self._provider.identity}:web-search",
-                    ),
-                    store=self._store,
-                    hard_policy=self._portfolio_policy.hard_policy,
-                ).grade_if_eligible(resolved_job, profile)
+                grade_attempts += 1
+                try:
+                    result = DeepGradingService(
+                        provider=_PreloadedGradeProvider(
+                            raw_grade,
+                            identity=f"{self._provider.identity}:web-search",
+                        ),
+                        store=self._store,
+                        hard_policy=self._portfolio_policy.hard_policy,
+                    ).grade_if_eligible(resolved_job, profile)
+                except GradingContractError:
+                    contract_failures += 1
+                    print(
+                        "Web grading resolution "
+                        f"{grading_job['stable_id']}: status=contract_error, "
+                        "accepted=false"
+                    )
+                    continue
             else:
                 continue
             if result is None:
@@ -210,6 +232,10 @@ class ProductionPortfolioGrader:
             })
         if web_attempts and web_responses == 0:
             raise RuntimeError("All web grading resolutions failed safely")
+        if grade_attempts and contract_failures == grade_attempts:
+            raise RuntimeError(
+                "All deep grading outputs failed contract validation"
+            )
         return sorted(
             graded,
             key=lambda item: item["score"],

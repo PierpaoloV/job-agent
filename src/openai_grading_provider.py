@@ -291,6 +291,7 @@ _DEEP_GRADE_SCHEMA = {
                 "official_vacancy_version": {"type": ["string", "null"]},
                 "rows": {
                     "type": "array",
+                    "minItems": 1,
                     "items": {
                         "type": "object",
                         "properties": {
@@ -340,7 +341,11 @@ _RESOLVED_VACANCY_SCHEMA = {
         "modality": {"type": "string"},
         "seniority": {"type": "string"},
         "official_description": {"type": "string"},
-        "requirements": {"type": "array", "items": {"type": "string"}},
+        "requirements": {
+            "type": "array",
+            "minItems": 1,
+            "items": {"type": "string"},
+        },
         "published_at": {"type": ["string", "null"]},
         "process_language": {
             "enum": ["english", "italian", "french", "german", "unknown"]

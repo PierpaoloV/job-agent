@@ -51,6 +51,10 @@ def test_provider_uses_one_non_stored_strict_structured_response(monkeypatch):
         "confidence",
         "assumptions",
     }
+    matrix_rows = kwargs["json"]["text"]["format"]["schema"]["properties"][
+        "requirements_evidence_matrix"
+    ]["properties"]["rows"]
+    assert matrix_rows["minItems"] == 1
 
 
 def test_missing_key_fails_before_network(monkeypatch):
@@ -99,6 +103,10 @@ def test_web_resolution_and_grading_remain_one_structured_api_call(monkeypatch):
         "resolved_vacancy",
         "grade",
     ]
+    resolved_vacancy = payload["text"]["format"]["schema"]["properties"][
+        "resolved_vacancy"
+    ]["anyOf"][0]
+    assert resolved_vacancy["properties"]["requirements"]["minItems"] == 1
     assert "const" not in str(payload["text"]["format"]["schema"])
 
 

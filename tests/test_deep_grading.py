@@ -910,6 +910,69 @@ def test_one_web_provider_error_does_not_block_other_resolutions(
     assert "example:second: status=provider_error" in output
 
 
+def test_one_invalid_web_grade_does_not_block_other_verified_roles(
+    tmp_path,
+    capsys,
+):
+    class PartiallyInvalidProvider(FakeProvider):
+        identity = "fake-web-grader"
+
+        def resolve_and_grade(self, lead, professional_profile):
+            del professional_profile
+            response = valid_response()
+            requirements = ["Python", "Robotics"]
+            if lead["stable_id"] == "example:invalid":
+                requirements = []
+                response["requirements_evidence_matrix"]["rows"] = []
+            return {
+                "resolution_status": "verified",
+                "resolved_vacancy": {
+                    "official_url": f"https://example.test/jobs/{lead['stable_id']}",
+                    "official_job_id": lead["stable_id"],
+                    "title": "Research Scientist",
+                    "company": "Example AI",
+                    "team": "Research",
+                    "location": "Zurich",
+                    "modality": "on-site",
+                    "seniority": "",
+                    "official_description": (
+                        "Example AI is hiring a research scientist to design, "
+                        "validate, and deploy computer-vision systems using "
+                        "Python and robotics methods in production research."
+                    ),
+                    "requirements": requirements,
+                    "published_at": "2026-07-16",
+                    "process_language": "english",
+                },
+                "grade": response,
+            }
+
+    ranked = main.ProductionPortfolioGrader(
+        store=DeepGradeStore(tmp_path),
+        provider=PartiallyInvalidProvider(),
+        profile_loader=profile,
+    ).rank(
+        [
+            vacancy(
+                stable_id="example:invalid",
+                verification_status="needs_local_fetch",
+                official_description="",
+                screening_outcome="shortlisted",
+            ),
+            vacancy(
+                stable_id="example:valid",
+                verification_status="needs_local_fetch",
+                official_description="",
+                screening_outcome="shortlisted",
+            ),
+        ],
+        10,
+    )
+
+    assert [item["stable_id"] for item in ranked] == ["example:valid"]
+    assert "example:invalid: status=contract_error" in capsys.readouterr().out
+
+
 def test_all_web_provider_errors_fail_the_batch(tmp_path):
     class FailingProvider(FakeProvider):
         identity = "fake-web-grader"

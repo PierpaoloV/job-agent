@@ -11,6 +11,7 @@ import os
 from pathlib import Path
 import secrets
 import stat
+import sys
 from typing import Any, Callable, Protocol
 
 from application_composition import (
@@ -61,6 +62,7 @@ from opportunity_decisions import (
     SuppressingDiscoveryNotifier,
     build_opportunity_callback_route,
 )
+from redacted_logging import RedactedStructuredLogger
 from workflow import SystemClock
 
 
@@ -68,6 +70,16 @@ PRODUCTION_CONFIG_VERSION = "job-agent.local-worker-config.v1"
 PREPARATION_CURSOR_STATE_VERSION = (
     "job-agent.application-preparation-notification-cursors.v1"
 )
+_IDEMPOTENT_BACKGROUND_RETRY_EVIDENCE = {
+    "application_preparations": (
+        "Hosted preparation reconciliation uses exact durable intent state, "
+        "read-only GitHub inspection, and an idempotent Telegram delivery ledger"
+    ),
+    "discovery_notifications": (
+        "Discovery synchronization is read-only and Telegram delivery is guarded "
+        "by durable idempotency claims"
+    ),
+}
 
 
 class TelegramRouter(Protocol):
@@ -569,21 +581,22 @@ def build_local_worker(
             poll_timeout=telegram_poll_timeout,
         )
     wired.update(capabilities or {})
+    safe_retry_capabilities = {
+        name: evidence
+        for name, evidence in _IDEMPOTENT_BACKGROUND_RETRY_EVIDENCE.items()
+        if name in wired
+    }
+    if telegram_router is not None:
+        safe_retry_capabilities["telegram"] = (
+            "The outer Telegram capability only polls updates; "
+            "callback effects use separate durable capability claims"
+        )
     return LocalWorker(
         store=store,
         capabilities=wired,
         logger=logger,
         reconciliation_verifiers=reconciliation_verifiers,
-        safe_retry_capabilities=(
-            {
-                "telegram": (
-                    "The outer Telegram capability only polls updates; "
-                    "callback effects use separate durable capability claims"
-                )
-            }
-            if telegram_router is not None
-            else None
-        ),
+        safe_retry_capabilities=safe_retry_capabilities,
     )
 
 
@@ -797,6 +810,7 @@ def build_production_runtime(
         return _DisabledRuntime("telegram_secret_missing")
     root = repository_root or Path(__file__).resolve().parents[1]
     github_token = None
+    encoded_handoff_key = None
     if application_coordinator is None:
         if config.hosted_artifacts is None:
             return _DisabledRuntime("hosted_artifact_configuration_missing")
@@ -1004,7 +1018,17 @@ def build_production_runtime(
         capabilities=background_capabilities,
         telegram_router=router,
         telegram_poll_timeout=telegram_poll_timeout,
-        logger=logger,
+        logger=(
+            logger
+            or RedactedStructuredLogger(
+                sys.stderr,
+                secrets=tuple(
+                    value
+                    for value in (token, github_token, encoded_handoff_key)
+                    if value
+                ),
+            )
+        ),
         reconciliation_verifiers=reconciliation_verifiers,
     )
     control.bind(worker)
@@ -1055,10 +1079,14 @@ def main(
             config_path=config_path,
         )
     )
-    if runtime.status().get("health") in {"unwired", "disabled"}:
-        return 0
+    status = runtime.status()
+    if status.get("health") in {"unwired", "disabled"}:
+        print(json.dumps(status, sort_keys=True))
+        return 1
     if arguments.once:
-        runtime.run_once()
+        status = runtime.run_once()
+        print(json.dumps(status, sort_keys=True))
+        return 0 if status.get("health") in {"healthy", "paused", "stopped"} else 1
     else:
         runtime.serve()
     return 0
