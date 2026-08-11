@@ -1068,6 +1068,73 @@ def test_production_factory_persists_preparation_cursors_beside_worker_state(
     )
 
 
+def test_hosted_gateway_owns_telegram_updates_without_local_polling(tmp_path):
+    config_path = tmp_path / "worker-config.json"
+    config_path.write_text(
+        json.dumps(
+            {
+                "version": "job-agent.local-worker-config.v1",
+                "telegram": {
+                    "actor_id": "42",
+                    "chat_id": "99",
+                    "token_keychain_service": "job-agent.telegram",
+                    "token_keychain_account": "worker-bot",
+                },
+                "hosted_artifacts": {
+                    "repository": "owner/job-agent",
+                    "workflow": "run.yml",
+                    "branch": "main",
+                    "github_token_keychain_service": "job-agent.github",
+                    "github_token_keychain_account": "worker",
+                    "handoff_key_keychain_service": "job-agent.handoff",
+                    "handoff_key_keychain_account": "worker",
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    poll_calls = []
+
+    class Api:
+        def poll_updates(self, *, offset, timeout):
+            poll_calls.append((offset, timeout))
+            raise AssertionError("The hosted webhook owns Telegram updates")
+
+    class Coordinator:
+        def pending_preparation_ids(self):
+            return ()
+
+        def preparation_completion_ids(self):
+            return ()
+
+        def resume_pending(self, application_id):
+            raise AssertionError(f"No preparation should resume: {application_id}")
+
+        def command_for_token(self, token):
+            return None
+
+        def handle(self, command):
+            raise AssertionError("No application callback expected")
+
+    runtime = build_production_runtime(
+        state_path=tmp_path / "worker-state.json",
+        config_path=config_path,
+        secret_store=SimpleNamespace(
+            get=lambda service, account: "telegram-secret"
+        ),
+        api_factory=lambda **kwargs: Api(),
+        application_coordinator=Coordinator(),
+        application_api_factory=lambda **kwargs: SimpleNamespace(),
+        telegram_poll_timeout=0,
+    )
+
+    status = runtime.run_once()
+
+    assert status["health"] == "healthy"
+    assert "telegram" not in status["capabilities"]
+    assert poll_calls == []
+
+
 def test_production_factory_fails_closed_without_hosted_artifact_config(tmp_path):
     config_path = tmp_path / "worker-config.json"
     config_path.write_text(

@@ -1017,7 +1017,9 @@ def build_production_runtime(
     worker = build_local_worker(
         state_path=state_path,
         capabilities=background_capabilities,
-        telegram_router=router,
+        telegram_router=(
+            None if config.hosted_artifacts is not None else router
+        ),
         telegram_poll_timeout=telegram_poll_timeout,
         logger=(
             logger
