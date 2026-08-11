@@ -142,9 +142,23 @@ class TelegramWorkerHttpApi:
                 if isinstance(payload, Mapping)
                 else "unknown"
             )
+            description = (
+                str(payload.get("description", "")).lower()
+                if isinstance(payload, Mapping)
+                else ""
+            )
+            conflict = ""
+            if status_code == 409 or error_code == 409:
+                if "webhook" in description:
+                    conflict = ", conflict=webhook"
+                elif "getupdates" in description.replace(" ", ""):
+                    conflict = ", conflict=other_poller"
+                else:
+                    conflict = ", conflict=unknown"
             raise RuntimeError(
                 "Telegram worker polling failed safely "
-                f"(http_status={status_code}, error_code={error_code})"
+                f"(http_status={status_code}, error_code={error_code}"
+                f"{conflict})"
             )
         return [dict(item) for item in payload["result"] if isinstance(item, Mapping)]
 

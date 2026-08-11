@@ -26,7 +26,21 @@ from local_worker_telegram import (
 )
 
 
-def test_poll_failure_reports_only_safe_http_diagnostics():
+@pytest.mark.parametrize(
+    ("description", "conflict"),
+    (
+        ("Conflict: can't use getUpdates while webhook is active", "webhook"),
+        (
+            "Conflict: terminated by other getUpdates request",
+            "other_poller",
+        ),
+        ("sensitive upstream detail", "unknown"),
+    ),
+)
+def test_poll_failure_reports_only_safe_http_diagnostics(
+    description,
+    conflict,
+):
     class Response:
         ok = False
         status_code = 409
@@ -35,7 +49,7 @@ def test_poll_failure_reports_only_safe_http_diagnostics():
             return {
                 "ok": False,
                 "error_code": 409,
-                "description": "sensitive upstream detail",
+                "description": description,
             }
 
     class Http:
@@ -53,7 +67,8 @@ def test_poll_failure_reports_only_safe_http_diagnostics():
     message = str(failure.value)
     assert "http_status=409" in message
     assert "error_code=409" in message
-    assert "sensitive upstream detail" not in message
+    assert f"conflict={conflict}" in message
+    assert description not in message
     assert "secret-token" not in message
 
 
