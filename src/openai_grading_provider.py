@@ -4,9 +4,46 @@ from __future__ import annotations
 
 import json
 import os
+import re
 from typing import Any, Mapping
 
 import requests
+
+
+_SAFE_METADATA_VALUE = re.compile(r"[A-Za-z0-9_.\[\]-]{1,80}")
+
+
+class OpenAIProviderError(RuntimeError):
+    """Provider failure carrying only bounded, non-sensitive diagnostics."""
+
+    def __init__(
+        self,
+        *,
+        http_status: Any = None,
+        error_type: Any = None,
+        code: Any = None,
+        param: Any = None,
+        transport: Any = None,
+        configuration: Any = None,
+    ) -> None:
+        if http_status is not None:
+            self.safe_detail = (
+                f"HTTP {_safe_http_status(http_status)}, "
+                f"type={_safe_metadata_value(error_type)}, "
+                f"code={_safe_metadata_value(code)}, "
+                f"param={_safe_metadata_value(param)}"
+            )
+        elif transport is not None:
+            self.safe_detail = f"transport={_safe_metadata_value(transport)}"
+        elif configuration is not None:
+            self.safe_detail = (
+                f"configuration={_safe_metadata_value(configuration)}"
+            )
+        else:
+            self.safe_detail = "provider=unknown"
+        super().__init__(
+            f"OpenAI deep grading failed safely ({self.safe_detail})"
+        )
 
 
 class OpenAIGradingProvider:
@@ -69,7 +106,9 @@ class OpenAIGradingProvider:
     ) -> str:
         api_key = os.environ.get("OPENAI_API_KEY")
         if not api_key:
-            raise RuntimeError("OPENAI_API_KEY is required for verified deep grading")
+            raise OpenAIProviderError(
+                configuration="OPENAI_API_KEY_missing"
+            )
         payload = {
             "model": self._model,
             "input": json.dumps(request, sort_keys=True),
@@ -105,22 +144,17 @@ class OpenAIGradingProvider:
             response_payload = response.json()
             return _response_text(response_payload)
         except requests.HTTPError as exc:
-            detail = _safe_http_error_detail(exc.response)
-            raise RuntimeError(
-                f"OpenAI deep grading failed safely ({detail})"
-            ) from None
+            metadata = _safe_http_error_metadata(exc.response)
+            raise OpenAIProviderError(**metadata) from None
         except Exception as exc:
             # Provider bodies may contain request context. Keep the workflow's
             # public error path free of remote response text and credentials.
-            raise RuntimeError(
-                "OpenAI deep grading failed safely "
-                f"(transport={type(exc).__name__})"
-            ) from None
+            raise OpenAIProviderError(transport=type(exc).__name__) from None
 
 
-def _safe_http_error_detail(response: Any) -> str:
+def _safe_http_error_metadata(response: Any) -> dict[str, Any]:
     """Expose only low-cardinality API metadata, never response messages."""
-    status = getattr(response, "status_code", "unknown")
+    status = _safe_http_status(getattr(response, "status_code", "unknown"))
     code = "unknown"
     param = "unknown"
     error_type = "unknown"
@@ -128,14 +162,30 @@ def _safe_http_error_detail(response: Any) -> str:
         body = response.json()
         error = body.get("error", {}) if isinstance(body, Mapping) else {}
         if isinstance(error, Mapping):
-            code = str(error.get("code") or "unknown")
-            param = str(error.get("param") or "unknown")
-            error_type = str(error.get("type") or "unknown")
+            code = _safe_metadata_value(error.get("code"))
+            param = _safe_metadata_value(error.get("param"))
+            error_type = _safe_metadata_value(error.get("type"))
     except Exception:
         pass
-    return (
-        f"HTTP {status}, type={error_type}, code={code}, param={param}"
-    )
+    return {
+        "http_status": status,
+        "error_type": error_type,
+        "code": code,
+        "param": param,
+    }
+
+
+def _safe_http_status(value: Any) -> str:
+    try:
+        status = int(value)
+    except (TypeError, ValueError):
+        return "unknown"
+    return str(status) if 100 <= status <= 599 else "unknown"
+
+
+def _safe_metadata_value(value: Any) -> str:
+    candidate = str(value or "")
+    return candidate if _SAFE_METADATA_VALUE.fullmatch(candidate) else "unknown"
 
 
 def _response_text(payload: Mapping[str, Any]) -> str:
@@ -151,7 +201,7 @@ def _response_text(payload: Mapping[str, Any]) -> str:
     raise ValueError("OpenAI response contained no text output")
 
 
-__all__ = ["OpenAIGradingProvider"]
+__all__ = ["OpenAIGradingProvider", "OpenAIProviderError"]
 
 
 _EXPLAINED_SCORE = {

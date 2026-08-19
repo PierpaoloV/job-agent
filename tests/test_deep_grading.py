@@ -20,6 +20,7 @@ from deep_grading import (
 )
 import deep_grading_store
 import main
+from openai_grading_provider import OpenAIProviderError
 from vacancy_policy import HardPolicy
 
 
@@ -1044,6 +1045,58 @@ def test_all_web_provider_errors_fail_the_batch(tmp_path):
             ],
             10,
         )
+
+
+def test_repeated_openai_provider_failure_opens_safe_circuit(
+    tmp_path,
+    capsys,
+):
+    safe_detail = (
+        "HTTP 429, type=rate_limit_error, "
+        "code=insufficient_quota, param=unknown"
+    )
+
+    class GloballyFailingProvider(FakeProvider):
+        identity = "fake-web-grader"
+
+        def __init__(self):
+            super().__init__()
+            self.resolve_calls = 0
+
+        def resolve_and_grade(self, lead, professional_profile):
+            self.resolve_calls += 1
+            raise OpenAIProviderError(
+                http_status=429,
+                error_type="rate_limit_error",
+                code="insufficient_quota",
+                param="unknown",
+            )
+
+    provider = GloballyFailingProvider()
+    jobs = [
+        vacancy(
+            stable_id=f"example:{index}",
+            verification_status="needs_local_fetch",
+            official_description="",
+            screening_outcome="shortlisted",
+        )
+        for index in range(10)
+    ]
+
+    with pytest.raises(
+        RuntimeError,
+        match="Web grading provider circuit opened safely",
+    ) as failure:
+        main.ProductionPortfolioGrader(
+            store=DeepGradeStore(tmp_path),
+            provider=provider,
+            profile_loader=profile,
+        ).rank(jobs, 10)
+
+    assert provider.resolve_calls == 2
+    assert safe_detail in str(failure.value)
+    output = capsys.readouterr().out
+    assert output.count(safe_detail) == 2
 
 
 def test_web_grade_drops_invented_evidence_and_canonicalizes_requirements(

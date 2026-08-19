@@ -20,7 +20,7 @@ from deep_grading import (
     SanitizedProfessionalProfile,
 )
 from opportunity_domain import OfficialVacancyData, OfficialVacancySnapshot
-from openai_grading_provider import OpenAIGradingProvider
+from openai_grading_provider import OpenAIGradingProvider, OpenAIProviderError
 from search_official_source import is_official_company_url
 from vacancy_policy import (
     ScreeningOutcome,
@@ -120,6 +120,8 @@ class ProductionPortfolioGrader:
         graded = []
         web_attempts = 0
         web_responses = 0
+        consecutive_provider_failure = None
+        consecutive_provider_failure_count = 0
 
         def grade_with_contract_guard(
             grading_service,
@@ -169,13 +171,35 @@ class ProductionPortfolioGrader:
                         _public_alert_lead(grading_job),
                         profile.to_dict(),
                     )
+                except OpenAIProviderError as error:
+                    if error.safe_detail == consecutive_provider_failure:
+                        consecutive_provider_failure_count += 1
+                    else:
+                        consecutive_provider_failure = error.safe_detail
+                        consecutive_provider_failure_count = 1
+                    print(
+                        "Web grading resolution "
+                        f"{grading_job['stable_id']}: "
+                        "status=provider_error, accepted=false, "
+                        f"{error.safe_detail}"
+                    )
+                    if consecutive_provider_failure_count >= 2:
+                        raise RuntimeError(
+                            "Web grading provider circuit opened safely "
+                            f"({error.safe_detail})"
+                        ) from None
+                    continue
                 except RuntimeError:
+                    consecutive_provider_failure = None
+                    consecutive_provider_failure_count = 0
                     print(
                         "Web grading resolution "
                         f"{grading_job['stable_id']}: "
                         "status=provider_error, accepted=false"
                     )
                     continue
+                consecutive_provider_failure = None
+                consecutive_provider_failure_count = 0
                 web_responses += 1
                 resolution_status = str(
                     resolved.get("resolution_status", "unknown")

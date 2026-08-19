@@ -8,6 +8,7 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1] / "src"))
 
 import openai_grading_provider
 from openai_grading_provider import OpenAIGradingProvider
+from openai_grading_provider import OpenAIProviderError
 
 
 class FakeResponse:
@@ -163,3 +164,39 @@ def test_http_failure_reports_only_safe_api_metadata(monkeypatch):
     assert "code=unsupported_value" in message
     assert "param=tools[0].type" in message
     assert "sensitive" not in message
+    assert isinstance(caught.value, OpenAIProviderError)
+    assert caught.value.safe_detail in message
+
+
+def test_http_failure_rejects_unbounded_metadata(monkeypatch):
+    monkeypatch.setenv("OPENAI_API_KEY", "test-key")
+
+    class RejectedResponse:
+        status_code = 400
+
+        def raise_for_status(self):
+            error = openai_grading_provider.requests.HTTPError("unsafe message")
+            error.response = self
+            raise error
+
+        def json(self):
+            return {
+                "error": {
+                    "type": "invalid request with sensitive detail",
+                    "code": "secret marker must not escape",
+                    "param": "unsafe\nparameter",
+                }
+            }
+
+    monkeypatch.setattr(
+        openai_grading_provider.requests,
+        "post",
+        lambda *args, **kwargs: RejectedResponse(),
+    )
+
+    with pytest.raises(OpenAIProviderError) as caught:
+        OpenAIGradingProvider().resolve_and_grade({}, {})
+
+    assert caught.value.safe_detail == (
+        "HTTP 400, type=unknown, code=unknown, param=unknown"
+    )
