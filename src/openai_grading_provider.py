@@ -10,7 +10,11 @@ from typing import Any, Mapping
 import requests
 
 
-_SAFE_METADATA_VALUE = re.compile(r"[A-Za-z0-9_.\[\]-]{1,80}")
+_SAFE_API_METADATA_VALUE = re.compile(r"[a-z][a-z0-9_]{0,63}")
+_SAFE_API_PARAM_VALUE = re.compile(
+    r"[A-Za-z_][A-Za-z0-9_]*(?:(?:\[\d+\])|(?:\.[A-Za-z_][A-Za-z0-9_]*))*"
+)
+_SAFE_LOCAL_METADATA_VALUE = re.compile(r"[A-Za-z][A-Za-z0-9_]{0,79}")
 
 
 class OpenAIProviderError(RuntimeError):
@@ -29,15 +33,17 @@ class OpenAIProviderError(RuntimeError):
         if http_status is not None:
             self.safe_detail = (
                 f"HTTP {_safe_http_status(http_status)}, "
-                f"type={_safe_metadata_value(error_type)}, "
-                f"code={_safe_metadata_value(code)}, "
-                f"param={_safe_metadata_value(param)}"
+                f"type={_safe_api_metadata_value(error_type)}, "
+                f"code={_safe_api_metadata_value(code)}, "
+                f"param={_safe_api_param_value(param)}"
             )
         elif transport is not None:
-            self.safe_detail = f"transport={_safe_metadata_value(transport)}"
+            self.safe_detail = (
+                f"transport={_safe_local_metadata_value(transport)}"
+            )
         elif configuration is not None:
             self.safe_detail = (
-                f"configuration={_safe_metadata_value(configuration)}"
+                f"configuration={_safe_local_metadata_value(configuration)}"
             )
         else:
             self.safe_detail = "provider=unknown"
@@ -162,9 +168,9 @@ def _safe_http_error_metadata(response: Any) -> dict[str, Any]:
         body = response.json()
         error = body.get("error", {}) if isinstance(body, Mapping) else {}
         if isinstance(error, Mapping):
-            code = _safe_metadata_value(error.get("code"))
-            param = _safe_metadata_value(error.get("param"))
-            error_type = _safe_metadata_value(error.get("type"))
+            code = _safe_api_metadata_value(error.get("code"))
+            param = _safe_api_param_value(error.get("param"))
+            error_type = _safe_api_metadata_value(error.get("type"))
     except Exception:
         pass
     return {
@@ -183,9 +189,29 @@ def _safe_http_status(value: Any) -> str:
     return str(status) if 100 <= status <= 599 else "unknown"
 
 
-def _safe_metadata_value(value: Any) -> str:
+def _safe_api_metadata_value(value: Any) -> str:
     candidate = str(value or "")
-    return candidate if _SAFE_METADATA_VALUE.fullmatch(candidate) else "unknown"
+    return (
+        candidate
+        if _SAFE_API_METADATA_VALUE.fullmatch(candidate)
+        else "unknown"
+    )
+
+
+def _safe_api_param_value(value: Any) -> str:
+    candidate = str(value or "")
+    return (
+        candidate if _SAFE_API_PARAM_VALUE.fullmatch(candidate) else "unknown"
+    )
+
+
+def _safe_local_metadata_value(value: Any) -> str:
+    candidate = str(value or "")
+    return (
+        candidate
+        if _SAFE_LOCAL_METADATA_VALUE.fullmatch(candidate)
+        else "unknown"
+    )
 
 
 def _response_text(payload: Mapping[str, Any]) -> str:

@@ -1,10 +1,14 @@
 from pathlib import Path
 import sys
+from types import SimpleNamespace
+
+import pytest
 
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from discovery_pending import PendingShortlistStore
+import discovery_jobs
 from workflow import ShortlistArtifact
 
 
@@ -90,3 +94,49 @@ def test_web_resolved_grade_clears_prior_unversioned_pending_record(tmp_path):
     ])
 
     assert not path.exists()
+
+
+def test_failed_deep_grade_leaves_pending_shortlist_retryable(
+    monkeypatch,
+    tmp_path,
+):
+    pending_path = tmp_path / "data" / "pending-shortlist.json"
+    source = artifact(
+        "blocked",
+        verification_status="needs_local_fetch",
+        official_description="",
+    )
+    PendingShortlistStore(pending_path).merge(source)
+    shortlist_path = tmp_path / "shortlist.json"
+    source.write(shortlist_path)
+
+    class FailingGrader:
+        def __init__(self, *, portfolio_policy):
+            assert portfolio_policy == "configured-policy"
+
+        def rank(self, jobs, limit):
+            raise RuntimeError("provider circuit opened safely")
+
+    monkeypatch.setitem(
+        sys.modules,
+        "main",
+        SimpleNamespace(
+            ProductionPortfolioGrader=FailingGrader,
+            _load_portfolio_policy=lambda: "configured-policy",
+        ),
+    )
+    monkeypatch.chdir(tmp_path)
+    output_path = tmp_path / "graded.json"
+
+    with pytest.raises(RuntimeError, match="provider circuit opened safely"):
+        discovery_jobs.main([
+            "deep-grade",
+            "--artifact",
+            str(shortlist_path),
+            "--output",
+            str(output_path),
+        ])
+
+    retry = PendingShortlistStore(pending_path).merge(artifact())
+    assert [item.stable_id for item in retry.opportunities] == ["blocked"]
+    assert not output_path.exists()

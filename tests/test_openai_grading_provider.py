@@ -200,3 +200,16 @@ def test_http_failure_rejects_unbounded_metadata(monkeypatch):
     assert caught.value.safe_detail == (
         "HTTP 400, type=unknown, code=unknown, param=unknown"
     )
+
+
+def test_provider_error_rejects_secret_shaped_api_metadata():
+    error = OpenAIProviderError(
+        http_status=401,
+        error_type="sk-secret-token",
+        code="sk-another-secret",
+        param="sk-secret-token",
+    )
+
+    assert error.safe_detail == (
+        "HTTP 401, type=unknown, code=unknown, param=unknown"
+    )
