@@ -443,3 +443,71 @@ jobs:
       - name: Remove plaintext candidate material
         if: always()
         run: rm -rf data/hosted-inputs data/private/application-artifacts
+
+      - name: Stage remote preparation completion
+        id: completion_delivery
+        env:
+          PYTHONPATH: src
+          APPLICATION_ID: ${{ github.event.client_payload.application_id }}
+          VACANCY_VERSION: ${{ github.event.client_payload.official_vacancy_version }}
+          RUN_URL: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: >-
+          python -m hosted_preparation_completion arm
+          --application-id "$APPLICATION_ID"
+          --official-vacancy-version "$VACANCY_VERSION"
+          --run-url "$RUN_URL"
+
+      - name: Package authoritative completion state
+        id: package_completion_state
+        env:
+          PYTHONPATH: src
+        run: >-
+          python -m actions_state write-manifest
+          --root . --workflow run.yml
+          --branch ${{ github.event.repository.default_branch }}
+          --stage prepare
+
+      - name: Publish authoritative completion state before notification
+        uses: actions/upload-artifact@v4
+        with:
+          name: discovery-state-prepare-staged-${{ github.run_id }}-${{ github.run_attempt }}
+          path: data/actions-state
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Notify that CV and letter are ready
+        if: steps.completion_delivery.outputs.should_send == 'true'
+        env:
+          PYTHONPATH: src
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          APPLICATION_ID: ${{ github.event.client_payload.application_id }}
+          VACANCY_VERSION: ${{ github.event.client_payload.official_vacancy_version }}
+          RUN_URL: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          COMPLETION_CLAIM_TOKEN: ${{ steps.completion_delivery.outputs.claim_token }}
+        run: >-
+          python -m hosted_preparation_completion dispatch
+          --application-id "$APPLICATION_ID"
+          --official-vacancy-version "$VACANCY_VERSION"
+          --run-url "$RUN_URL"
+          --claim-token "$COMPLETION_CLAIM_TOKEN"
+
+      - name: Package final authoritative completion state
+        id: package_final_completion_state
+        if: always() && steps.package_completion_state.outcome == 'success'
+        env:
+          PYTHONPATH: src
+        run: >-
+          python -m actions_state write-manifest
+          --root . --workflow run.yml
+          --branch ${{ github.event.repository.default_branch }}
+          --stage prepare
+
+      - name: Publish final authoritative completion state
+        if: always() && steps.package_final_completion_state.outcome == 'success'
+        uses: actions/upload-artifact@v4
+        with:
+          name: discovery-state-prepare-final-${{ github.run_id }}-${{ github.run_attempt }}
+          path: data/actions-state
+          if-no-files-found: error
+          retention-days: 14

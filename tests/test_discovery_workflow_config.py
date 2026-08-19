@@ -61,7 +61,7 @@ def test_remote_discovery_has_two_dependent_least_privilege_jobs():
         assert binding in grade
 
 
-def test_repository_dispatch_generates_only_an_encrypted_application_package():
+def test_repository_dispatch_completes_preparation_and_notifies_from_cloud():
     text = WORKFLOW.read_text(encoding="utf-8")
     prepare = _job_block(text, "prepare-artifacts", None)
 
@@ -110,6 +110,25 @@ def test_repository_dispatch_generates_only_an_encrypted_application_package():
     assert "curriculum_vitae.pdf" not in prepare.split(
         "uses: actions/upload-artifact@v4"
     )[-1]
+    assert "python -m hosted_preparation_completion arm" in prepare
+    assert "python -m hosted_preparation_completion dispatch" in prepare
+    assert "id: completion_delivery" in prepare
+    assert "steps.completion_delivery.outputs.should_send == 'true'" in prepare
+    assert '--claim-token "$COMPLETION_CLAIM_TOKEN"' in prepare
+    assert "TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}" in prepare
+    assert "TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}" in prepare
+    assert "--stage prepare" in prepare
+    assert "discovery-state-prepare-staged-" in prepare
+    assert "discovery-state-prepare-final-" in prepare
+    assert prepare.index("Publish encrypted application package") < prepare.index(
+        "Stage remote preparation completion"
+    )
+    assert prepare.index(
+        "Publish authoritative completion state before notification"
+    ) < prepare.index("Notify that CV and letter are ready")
+    assert prepare.index("Notify that CV and letter are ready") < prepare.index(
+        "Publish final authoritative completion state"
+    )
 
 
 def test_hosted_workflow_supplies_owner_neutral_runtime_identity():

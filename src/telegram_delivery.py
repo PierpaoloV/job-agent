@@ -147,6 +147,17 @@ class TelegramDeliveryLedger:
             ).fetchone()
             return None if row is None else str(row[0])
 
+    def outbound_claim_is_sending(self, key: str, claim_token: str) -> bool:
+        """Verify exact ownership before crossing the Telegram boundary."""
+
+        with self._connect() as connection:
+            row = connection.execute(
+                "SELECT 1 FROM claims "
+                "WHERE key = ? AND status = 'sending' AND claim_token = ?",
+                (key, claim_token),
+            ).fetchone()
+            return row is not None
+
     def _initialize(self) -> None:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         with self._connect() as connection:

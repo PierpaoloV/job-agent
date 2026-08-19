@@ -20,7 +20,7 @@ submission to an applicant tracking system (ATS).
 | Send ranked digests and urgent alerts | Available | Telegram |
 | `👍`, `👎`, and `Dimmi di più` decisions | Available | Telegram webhook through Cloudflare |
 | Ask for and retain a discard reason | Available | Telegram, D1, and authoritative Actions state |
-| Prepare a tailored CV and cover letter after approval | Available | Anthropic, then an encrypted short-lived artifact |
+| Prepare a tailored CV and cover letter after approval | Available | Anthropic, an encrypted short-lived artifact, and a cloud Telegram completion notice |
 | Download, review, or use the prepared files | Requires a trusted consumer | Hosted mode publishes an encrypted handoff package |
 | Fill an ATS form (`Compila`) | Not hosted | Requires a supported local browser/ATS adapter |
 | Submit an application (`Invia`) | Not hosted | Requires a supported local browser/ATS adapter and an explicit final gate |
@@ -391,6 +391,7 @@ Approved preparation
   -> Anthropic structured CV/cover-letter generation
   -> deterministic claim audit and PDF rendering
   -> encrypted GitHub artifact
+  -> at-most-once Telegram completion notice from GitHub Actions
   -> no hosted ATS fill or submission
 ```
 

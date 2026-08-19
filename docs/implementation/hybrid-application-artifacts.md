@@ -5,12 +5,12 @@
 `Prepara candidatura` sends only an approved application ID and the exact
 official vacancy version to GitHub Actions. The hosted runtime restores the
 authoritative candidate-safe snapshot, generates and audits CV plus cover
-letter, then publishes only an authenticated encrypted package. The Mac
-durably records the workflow-run baseline, dispatches without blocking
-Telegram, and binds the request only when exactly one new run appears in the
-persisted workflow/branch/event scope. A later worker cycle downloads only that
-run's artifact, decrypts and verifies it with a Keychain-held key, and enables
-`Compila` only after the local files are intact.
+letter, then publishes only an authenticated encrypted package. In hosted
+mode, GitHub Actions durably arms and sends the completion notice directly;
+artifact preparation and its Telegram acknowledgement do not depend on an
+always-on Mac. A trusted local consumer remains optional: it can download,
+decrypt, and verify a bound package before enabling the non-hosted `Compila`
+gate.
 
 ## Safety invariants
 
@@ -23,6 +23,8 @@ run's artifact, decrypts and verifies it with a Keychain-held key, and enables
 - Zero runs after the discovery deadline or more than one candidate run fail
   closed and require explicit resolution.
 - Public Actions artifacts contain no plaintext CV, cover letter, or evidence.
+- Hosted completion delivery enters durable `sending` state before Telegram;
+  an ambiguous outcome is never retried automatically.
 - Repository, workflow, branch, application, vacancy, manifest, and file hashes
   are authenticated before installation.
 - Installed files are revalidated as owner-only, regular, non-symlinked files

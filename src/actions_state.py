@@ -396,7 +396,13 @@ def _environment_authority() -> dict[str, Any]:
 
 def _generation(manifest: Mapping[str, Any]) -> tuple[int, int, int]:
     authority = manifest["authority"]
-    stage_order = {"local": 0, "ingest": 1, "deep": 2, "decision": 3}
+    stage_order = {
+        "local": 0,
+        "ingest": 1,
+        "deep": 2,
+        "decision": 3,
+        "prepare": 4,
+    }
     return (
         int(authority.get("run_id", 0)),
         int(authority.get("run_attempt", 0)),
@@ -421,7 +427,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         sub.add_argument("--branch", default="main")
         sub.add_argument(
             "--stage",
-            choices=("local", "ingest", "deep", "decision"),
+            choices=("local", "ingest", "deep", "decision", "prepare"),
             default="local",
         )
     install = commands.add_parser("install-package")
