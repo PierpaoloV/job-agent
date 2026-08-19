@@ -25,6 +25,10 @@ gate.
 - Public Actions artifacts contain no plaintext CV, cover letter, or evidence.
 - Hosted completion delivery enters durable `sending` state before Telegram;
   an ambiguous outcome is never retried automatically.
+- The application reaches `CV pronto` only after encrypted publication, and
+  that durable transition names the exact vacancy, package hash, and Actions
+  run. A definitive Telegram rejection may replace it on a controlled retry;
+  an uncertain or possibly sent delivery cannot.
 - Repository, workflow, branch, application, vacancy, manifest, and file hashes
   are authenticated before installation.
 - Installed files are revalidated as owner-only, regular, non-symlinked files

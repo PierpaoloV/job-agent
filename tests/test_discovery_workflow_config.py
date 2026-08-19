@@ -112,6 +112,8 @@ def test_repository_dispatch_completes_preparation_and_notifies_from_cloud():
     )[-1]
     assert "python -m hosted_preparation_completion arm" in prepare
     assert "python -m hosted_preparation_completion dispatch" in prepare
+    assert 'PACKAGE_HASH: ${{ steps.prepare.outputs.package_hash }}' in prepare
+    assert '--package-hash "$PACKAGE_HASH"' in prepare
     assert "id: completion_delivery" in prepare
     assert "steps.completion_delivery.outputs.should_send == 'true'" in prepare
     assert '--claim-token "$COMPLETION_CLAIM_TOKEN"' in prepare

@@ -19,6 +19,7 @@ from hosted_artifact_preparation import (
     HostedPreparationInput,
     HostedPreparationInputStore,
 )
+from hosted_preparation_completion import HostedApplicationStateStore
 from telegram_delivery import TelegramDeliveryLedger
 
 
@@ -253,6 +254,38 @@ def test_state_bundle_preserves_and_validates_hosted_preparation_inputs(tmp_path
     bundle.manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
 
     with pytest.raises(ValueError, match="hosted preparation input"):
+        bundle.validate_manifest()
+
+
+def test_state_bundle_preserves_and_validates_hosted_application_state(tmp_path):
+    application_id = "approved-b0a227c91dd404d4"
+    vacancy_version = "sha256:" + "a" * 64
+    package_hash = "sha256:" + "c" * 64
+    HostedApplicationStateStore(
+        tmp_path / "data" / "hosted-application-state"
+    ).record_cv_ready(
+        application_id=application_id,
+        official_vacancy_version=vacancy_version,
+        package_hash=package_hash,
+        run_url="https://github.com/PierpaoloV/job-agent/actions/runs/32252719094",
+    )
+
+    bundle = StateBundle(tmp_path)
+    manifest = bundle.write_manifest()
+    state_path = f"data/hosted-application-state/{application_id}.json"
+    assert state_path in manifest["files"]
+    bundle.validate_manifest()
+
+    staged = bundle.package_dir / "files" / state_path
+    payload = json.loads(staged.read_text(encoding="utf-8"))
+    payload["package_hash"] = "sha256:" + "d" * 63
+    staged.write_text(json.dumps(payload), encoding="utf-8")
+    manifest = json.loads(bundle.manifest_path.read_text(encoding="utf-8"))
+    manifest["files"][state_path] = actions_state._file_hash(staged)
+    manifest["manifest_digest"] = actions_state._manifest_digest(manifest)
+    bundle.manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+
+    with pytest.raises(ValueError, match="hosted application state"):
         bundle.validate_manifest()
 
 

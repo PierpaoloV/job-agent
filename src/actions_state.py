@@ -21,6 +21,7 @@ from hosted_artifact_preparation import (
     HostedPreparationInput,
     hosted_preparation_input_filename,
 )
+from hosted_preparation_completion import HostedApplicationState
 from workflow import ShortlistArtifact
 
 
@@ -166,6 +167,15 @@ class StateBundle:
                     if path.is_file()
                 )
             )
+        application_states = self.root / "data" / "hosted-application-state"
+        if application_states.exists():
+            files.extend(
+                sorted(
+                    path
+                    for path in application_states.rglob("*.json")
+                    if path.is_file()
+                )
+            )
         return tuple(path for path in files if path.is_file())
 
     def _clear_package(self) -> None:
@@ -287,6 +297,10 @@ def _allowed_state_path(path: Path) -> bool:
         len(path.parts) == 3
         and path.parts[:2] == ("data", "hosted-preparation-inputs")
         and path.suffix == ".json"
+    ) or (
+        len(path.parts) == 3
+        and path.parts[:2] == ("data", "hosted-application-state")
+        and path.suffix == ".json"
     )
 
 
@@ -307,6 +321,9 @@ def _validate_embedded_version(relative: Path, path: Path) -> None:
         return
     elif _is_hosted_preparation_input_path(relative):
         _validate_hosted_preparation_input(relative, path)
+        return
+    elif _is_hosted_application_state_path(relative):
+        _validate_hosted_application_state(relative, path)
         return
     if expected is None:
         if relative == Path("data/telegram-deliveries.sqlite"):
@@ -376,6 +393,35 @@ def _validate_hosted_preparation_input(relative: Path, path: Path) -> None:
     if relative.name != expected_name:
         raise ValueError(
             f"Invalid hosted preparation input identity: {relative}"
+        )
+
+
+def _is_hosted_application_state_path(relative: Path) -> bool:
+    return (
+        len(relative.parts) == 3
+        and relative.parts[:2] == ("data", "hosted-application-state")
+        and relative.suffix == ".json"
+    )
+
+
+def _validate_hosted_application_state(relative: Path, path: Path) -> None:
+    try:
+        value = json.loads(path.read_text(encoding="utf-8"))
+        if not isinstance(value, dict):
+            raise ValueError
+        parsed = HostedApplicationState.from_dict(value)
+    except (json.JSONDecodeError, TypeError, ValueError) as exc:
+        raise ValueError(
+            f"Invalid hosted application state: {relative}"
+        ) from exc
+    if value != parsed.to_dict():
+        raise ValueError(
+            "Invalid hosted application state: non-canonical fields in "
+            f"{relative}"
+        )
+    if relative.name != f"{parsed.application_id}.json":
+        raise ValueError(
+            f"Invalid hosted application state identity: {relative}"
         )
 
 

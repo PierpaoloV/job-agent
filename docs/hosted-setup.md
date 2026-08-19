@@ -391,6 +391,7 @@ Approved preparation
   -> Anthropic structured CV/cover-letter generation
   -> deterministic claim audit and PDF rendering
   -> encrypted GitHub artifact
+  -> authoritative `CV pronto` state bound to the package SHA-256
   -> at-most-once Telegram completion notice from GitHub Actions
   -> no hosted ATS fill or submission
 ```
