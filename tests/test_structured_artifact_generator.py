@@ -287,6 +287,40 @@ def test_generates_both_documents_and_exact_claim_traces_in_one_provider_call():
     assert generated.additional_evidence
 
 
+def test_application_code_caps_model_selected_role_bullets_at_four():
+    bullets = [
+        f"Built verified research pipeline number {number}."
+        for number in ("one", "two", "three", "four", "five")
+    ]
+    source_block = "\n".join(
+        (
+            "Machine Learning Researcher",
+            "2022 - Present",
+            "Example Institute",
+            "Amsterdam",
+            *(f"• {bullet}" for bullet in bullets),
+        )
+    )
+    source = professional_source().replace(
+        "Machine Learning Researcher\n2022 - Present\nExample Institute\nAmsterdam\n"
+        "• Built reproducible research systems.",
+        source_block,
+    )
+    selection = professional_selection()
+    selection["experience"][0] = {
+        **selection["experience"][0],
+        "source_block": source_block,
+        "bullets": bullets,
+    }
+
+    generated = StructuredArtifactGenerator(
+        RecordingProvider(selection), candidate_name="Synthetic Candidate"
+    ).generate(replace(tailoring_request(), canonical_cv_text=source))
+
+    assert bullets[3] in generated.cv_text
+    assert bullets[4] not in generated.cv_text
+
+
 def test_uses_one_sonnet_structured_output_request_for_the_whole_bundle():
     model_payload = {
         "headline": "Applied AI Researcher",

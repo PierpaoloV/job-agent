@@ -647,8 +647,8 @@ def _validated_entry_bullets(
     lines: tuple[str, ...],
 ) -> tuple[str, ...]:
     raw = payload.get(name)
-    if not isinstance(raw, list) or not 1 <= len(raw) <= 4:
-        raise ValueError(f"{name} must contain 1 to 4 items")
+    if not isinstance(raw, list) or not raw:
+        raise ValueError(f"{name} must contain at least one item")
     source_bullets: list[str] = []
     current: list[str] = []
     for line in lines:
@@ -669,7 +669,7 @@ def _validated_entry_bullets(
         for bullet in source_bullets
     ):
         raise ValueError("experience source_block requires complete bullets")
-    selected = tuple(str(item).strip() for item in raw)
+    selected = tuple(str(item).strip() for item in raw[:4])
     available = {normalize_cv_text(item): item for item in source_bullets}
     if any(
         len(item.split()) < 4 or normalize_cv_text(item) not in available
