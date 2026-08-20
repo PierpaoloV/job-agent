@@ -184,3 +184,28 @@ def test_structured_projection_drops_every_unallowlisted_layout_block():
     assert "right to work" not in projected.casefold()
     assert "family status" not in projected.casefold()
     assert "private personal narrative" not in projected.casefold()
+
+
+def test_single_layout_block_does_not_fall_back_to_permissive_projection():
+    projected = _professional_cv_projection(
+        (
+            "\n".join(
+                (
+                    "Synthetic Candidate",
+                    "Applied AI Researcher",
+                    "synthetic@example.com",
+                    "Professional Profile",
+                    "I build trustworthy machine-learning systems.",
+                    "Expected remuneration: EUR 120000",
+                    "Right to work: unrestricted",
+                    "Family status: married",
+                )
+            ),
+        )
+    )
+
+    assert "Synthetic Candidate" in projected
+    assert "synthetic@example.com" in projected
+    assert "remuneration" not in projected.casefold()
+    assert "right to work" not in projected.casefold()
+    assert "family status" not in projected.casefold()

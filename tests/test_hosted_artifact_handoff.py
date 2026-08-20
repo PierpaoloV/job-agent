@@ -420,6 +420,45 @@ class RecordingProvider:
         return self.response
 
 
+def write_structured_canonical_cv(path):
+    canvas = Canvas(str(path))
+    y = 810
+
+    def block(*lines):
+        nonlocal y
+        text = canvas.beginText(50, y)
+        text.setLeading(14)
+        for line in lines:
+            text.textLine(line)
+        canvas.drawText(text)
+        y -= 14 * len(lines) + 24
+
+    block("Synthetic Candidate")
+    block("Applied AI Researcher")
+    block("synthetic@example.com")
+    block(
+        "Professional Profile",
+        "Applied AI researcher building reproducible machine-learning systems for clinical computer vision.",
+        "I validate machine-learning systems against real operational requirements and independent",
+        "evaluation datasets.",
+    )
+    block("Professional Experience")
+    block("Machine Learning Researcher", "2022 - Present")
+    block(
+        "Example Institute",
+        "Amsterdam",
+        "• Built reproducible research systems.",
+    )
+    block("Education")
+    block("PhD in Artificial Intelligence", "2018 - 2022")
+    block("Example University", "Amsterdam")
+    block("Peer-Reviewed Publications and Proceedings")
+    block("Reproducible machine-learning systems for trustworthy computer vision.")
+    block("Synthetic Candidate et al. Example Journal, 2026.")
+    block("doi:10.0000/example.2026.1")
+    canvas.save()
+
+
 def test_hosted_preparation_uses_authoritative_input_and_exports_one_package(
     tmp_path,
 ):
@@ -442,33 +481,7 @@ def test_hosted_preparation_uses_authoritative_input_and_exports_one_package(
         encoding="utf-8",
     )
     canonical_cv = tmp_path / "curriculum_vitae.pdf"
-    canvas = Canvas(str(canonical_cv))
-    y = 800
-    for line in (
-        "Synthetic Candidate",
-        "Applied AI Researcher",
-        "synthetic@example.com",
-        "Professional Profile",
-        "Applied AI researcher building reproducible machine-learning systems for clinical computer vision.",
-        "I validate machine-learning systems against real operational requirements and independent",
-        "evaluation datasets.",
-        "Professional Experience",
-        "Machine Learning Researcher",
-        "2022 - Present",
-        "Example Institute",
-        "Amsterdam",
-        "• Built reproducible research systems.",
-        "Education",
-        "PhD in Artificial Intelligence",
-        "2018 - 2022",
-        "Example University",
-        "Amsterdam",
-        "Peer-Reviewed Publications and Proceedings",
-        "Reproducible machine-learning systems for trustworthy computer vision.",
-    ):
-        canvas.drawString(50, y, line)
-        y -= 18
-    canvas.save()
+    write_structured_canonical_cv(canonical_cv)
     vacancy_version = identity().official_vacancy_version
     store = HostedPreparationInputStore(tmp_path / "authoritative-inputs")
     store.save(

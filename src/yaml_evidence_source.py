@@ -123,9 +123,7 @@ class YamlEvidenceSource:
                 for block in page.get_text("blocks", sort=True)
                 if str(block[4]).strip()
             )
-        canonical_cv_text = _professional_cv_projection(
-            extracted_blocks[0] if len(extracted_blocks) == 1 else extracted_blocks
-        )
+        canonical_cv_text = _professional_cv_projection(extracted_blocks)
         if not canonical_cv_text:
             raise ValueError("canonical CV must contain extractable text")
         return EvidenceBankSnapshot(
@@ -186,42 +184,8 @@ def _sha256(value: bytes) -> str:
 
 
 def _professional_cv_projection(value: str | Iterable[str]) -> str:
-    if not isinstance(value, str):
-        projected = _project_structured_blocks(tuple(value))
-        if projected:
-            return projected
-        value = "\n".join(value)
-
-    projected: list[str] = []
-    blocked_section = True
-    kept_identity = False
-    for raw_line in str(value).splitlines():
-        line = raw_line.strip()
-        if not line:
-            if projected and projected[-1]:
-                projected.append("")
-            continue
-        heading = " ".join(line.casefold().split())
-        if heading in _BLOCKED_SECTION_HEADINGS:
-            blocked_section = True
-            continue
-        if heading in _SAFE_SECTION_HEADINGS:
-            blocked_section = False
-        if (
-            _SENSITIVE_LINE.search(line)
-            or _SECRET_VALUE.search(line)
-            or _PAGE_FOOTER.search(line)
-        ):
-            continue
-        if blocked_section:
-            if not kept_identity:
-                projected.append(line)
-                kept_identity = True
-                continue
-            if not (_HEADER_CONTACT.search(line) or _HEADER_PROFESSION.search(line)):
-                continue
-        projected.append(line)
-    return "\n".join(projected).strip()
+    blocks = (value,) if isinstance(value, str) else tuple(value)
+    return _project_structured_blocks(blocks)
 
 
 def _project_structured_blocks(blocks: tuple[str, ...]) -> str:
@@ -258,7 +222,12 @@ def _project_structured_blocks(blocks: tuple[str, ...]) -> str:
                 section = "blocked"
             continue
         if section == "header":
-            safe = tuple(line for line in lines if _safe_header_projection_line(line))
+            safe = tuple(
+                line
+                for index, line in enumerate(lines)
+                if (index == 0 and _safe_identity_line(line))
+                or (index > 0 and _safe_header_projection_line(line))
+            )
             if safe:
                 result.append("\n".join(safe))
             continue
@@ -304,10 +273,18 @@ def _safe_header_projection_line(line: str) -> bool:
     if _SENSITIVE_LINE.search(line) or _SECRET_VALUE.search(line):
         return False
     return bool(
-        not line.strip()
-        or _HEADER_CONTACT.search(line)
+        _HEADER_CONTACT.search(line)
         or _HEADER_PROFESSION.search(line)
-        or (len(line.split()) <= 5 and not any(char.isdigit() for char in line))
+    )
+
+
+def _safe_identity_line(line: str) -> bool:
+    return bool(
+        line.strip()
+        and len(line.split()) <= 6
+        and not any(char.isdigit() for char in line)
+        and not _SENSITIVE_LINE.search(line)
+        and not _SECRET_VALUE.search(line)
     )
 
 

@@ -192,6 +192,48 @@ def professional_selection(**updates):
     return payload
 
 
+def write_professional_cv_pdf(
+    path,
+    *,
+    organization="Example Institute",
+    location="Amsterdam",
+    bullet="Built reproducible research systems.",
+    contacts="synthetic@example.com",
+):
+    canvas = Canvas(str(path))
+    y = 810
+
+    def block(*lines):
+        nonlocal y
+        text = canvas.beginText(50, y)
+        text.setLeading(14)
+        for line in lines:
+            text.textLine(line)
+        canvas.drawText(text)
+        y -= 14 * len(lines) + 24
+
+    block("Synthetic Candidate")
+    block("Applied AI Researcher")
+    block(contacts)
+    block(
+        "Professional Profile",
+        "Applied AI researcher building reproducible machine-learning systems for clinical computer vision.",
+        "I validate machine-learning systems against real operational requirements and independent",
+        "evaluation datasets.",
+    )
+    block("Professional Experience")
+    block("Machine Learning Researcher", "2022 - Present")
+    block(organization, location, f"• {bullet}")
+    block("Education")
+    block("PhD in Artificial Intelligence", "2018 - 2022")
+    block("Example University", location)
+    block("Peer-Reviewed Publications and Proceedings")
+    block("Reproducible machine-learning systems for trustworthy computer vision.")
+    block("Synthetic Candidate et al. Example Journal, 2026.")
+    block("doi:10.0000/example.2026.1")
+    canvas.save()
+
+
 def test_generates_both_documents_and_exact_claim_traces_in_one_provider_call():
     provider = RecordingProvider(professional_selection())
 
@@ -610,12 +652,7 @@ def test_generator_rejects_model_text_that_is_not_in_master_cv():
 
 def test_production_composition_builds_one_private_versioned_pdf_bundle(tmp_path):
     canonical_cv = tmp_path / "curriculum_vitae.pdf"
-    canvas = Canvas(str(canonical_cv))
-    y = 800
-    for line in professional_source().splitlines():
-        canvas.drawString(50, y, line)
-        y -= 18
-    canvas.save()
+    write_professional_cv_pdf(canonical_cv)
     evidence_path = tmp_path / "evidence.yaml"
     evidence_path.write_text(
         yaml.safe_dump(
@@ -675,34 +712,13 @@ def test_production_bundle_preserves_complete_master_cv_identity_and_structure(
     tmp_path,
 ):
     canonical_cv = tmp_path / "curriculum_vitae.pdf"
-    canvas = Canvas(str(canonical_cv))
-    source_lines = (
-        "Synthetic Candidate",
-        "Applied AI Researcher",
-        "synthetic@example.com | example.com/synthetic",
-        "Professional Profile",
-        "Applied AI researcher building reproducible machine-learning systems for clinical computer vision.",
-        "I validate machine-learning systems against real operational requirements and independent",
-        "evaluation datasets.",
-        "Professional Experience",
-        "Machine Learning Researcher",
-        "2022 - Present",
-        "Example Research Institute",
-        "Amsterdam, The Netherlands",
-        "• Built reproducible computer-vision research pipelines.",
-        "Education",
-        "PhD in Artificial Intelligence",
-        "2018 - 2022",
-        "Example University",
-        "Amsterdam, The Netherlands",
-        "Peer-Reviewed Publications and Proceedings",
-        "Reproducible machine-learning systems for trustworthy computer vision.",
+    write_professional_cv_pdf(
+        canonical_cv,
+        organization="Example Research Institute",
+        location="Amsterdam, The Netherlands",
+        bullet="Built reproducible computer-vision research pipelines.",
+        contacts="synthetic@example.com | example.com/synthetic",
     )
-    y = 800
-    for line in source_lines:
-        canvas.drawString(50, y, line)
-        y -= 18
-    canvas.save()
     evidence_path = tmp_path / "evidence.yaml"
     evidence_path.write_text(
         yaml.safe_dump(
