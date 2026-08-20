@@ -344,8 +344,18 @@ def _build_professional_documents(
         for requirement in target_requirements
         for evidence_id in requirement.evidence_ids
     }
-    if not set(selected_ids).issubset(referenced_evidence):
-        raise ValueError("cover letter requirements must justify selected evidence")
+    selected_ids = tuple(
+        evidence_id
+        for evidence_id in selected_ids
+        if evidence_id in referenced_evidence
+    )
+    if not selected_ids or not any(
+        EvidenceKind.SKILL in approved[evidence_id].kinds
+        for evidence_id in selected_ids
+    ):
+        raise ValueError(
+            "cover letter requirements require approved technical skill evidence"
+        )
     if any(
         not set(requirement.evidence_ids).intersection(selected_ids)
         for requirement in target_requirements

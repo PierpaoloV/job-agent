@@ -559,6 +559,33 @@ def test_structured_generation_requires_approved_technical_skill_evidence():
         )
 
 
+def test_unjustified_selected_evidence_is_excluded_from_both_documents():
+    extra = EvidenceRecord(
+        evidence_id="unreferenced-impact",
+        families=(ArtifactFamily.RESEARCH,),
+        kinds=(EvidenceKind.IMPACT,),
+        approved_statement="Improved an unrelated evaluation workflow.",
+        source_reference="master-cv:impact",
+    )
+    request = tailoring_request()
+
+    generated = StructuredArtifactGenerator(
+        RecordingProvider(
+            professional_selection(
+                selected_evidence_ids=["python-research", "unreferenced-impact"]
+            )
+        ),
+        candidate_name="Synthetic Candidate",
+    ).generate(replace(request, evidence=(*request.evidence, extra)))
+
+    assert "Improved an unrelated evaluation workflow." not in generated.cv_text
+    assert "Improved an unrelated evaluation workflow." not in generated.cover_letter_text
+    assert all(
+        claim.evidence_ids != ("unreferenced-impact",)
+        for claim in generated.claims
+    )
+
+
 def test_structured_generation_rejects_fields_mixed_across_source_roles():
     second_role = "\n".join(
         (
