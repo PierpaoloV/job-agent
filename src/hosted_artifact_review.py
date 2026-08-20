@@ -129,7 +129,11 @@ class GatewayArtifactReviewPublisher:
                 None,
             )
         except Exception as exc:
-            self._compensate(document_receipts, exc)
+            self._compensate(
+                authorization.review_id,
+                document_receipts,
+                exc,
+            )
         control_receipt = None
         try:
             control_receipt = self._control_sender(
@@ -154,7 +158,7 @@ class GatewayArtifactReviewPublisher:
             receipts = document_receipts + (
                 () if control_receipt is None else (control_receipt,)
             )
-            self._compensate(receipts, exc)
+            self._compensate(authorization.review_id, receipts, exc)
         return ArtifactReviewReceipt(
             review_id=authorization.review_id,
             document_message_ids=(
@@ -251,18 +255,50 @@ class GatewayArtifactReviewPublisher:
 
     def _compensate(
         self,
+        review_id: str,
         receipts: Sequence[TelegramReceipt],
         cause: Exception,
     ) -> None:
+        cleanup_registered = False
+        try:
+            cleanup_registered = self._register_cleanup(review_id, receipts)
+        except Exception:
+            pass
         try:
             self._message_deleter(receipts)
         except Exception as cleanup_error:
+            if cleanup_registered:
+                raise TelegramSendUncertain(
+                    "Protected review cleanup is durably scheduled"
+                ) from cleanup_error
             raise TelegramSendUncertain(
                 "Protected review bind failed and cleanup is uncertain"
             ) from cleanup_error
         raise TelegramSendUncertain(
             "Protected review publication was rolled back after bind failure"
         ) from cause
+
+    def _register_cleanup(
+        self,
+        review_id: str,
+        receipts: Sequence[TelegramReceipt],
+    ) -> bool:
+        items = tuple(receipts)
+        payload: dict[str, object] = {
+            "document_message_ids": [item.message_id for item in items[:2]],
+        }
+        if len(items) == 3:
+            payload["control_message_id"] = items[2].message_id
+        response = self._session.post(
+            f"{self._endpoint}/v1/artifact-reviews/"
+            f"{review_id}/publication-cleanup",
+            headers=self._headers(),
+            json=payload,
+            timeout=15,
+        )
+        return response.ok and response.json() == {
+            "status": "expiry_cleanup_uncertain"
+        }
 
 
 def _validate_identity(

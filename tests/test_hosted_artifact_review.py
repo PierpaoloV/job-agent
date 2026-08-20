@@ -64,6 +64,10 @@ class GatewaySession:
                     )
                 }
             )
+        if url.endswith(
+            "/v1/artifact-reviews/review-token-1/publication-cleanup"
+        ):
+            return Response({"status": "expiry_cleanup_uncertain"})
         raise AssertionError(f"unexpected URL: {url}")
 
 
@@ -273,3 +277,61 @@ def test_failed_control_binding_immediately_deletes_all_acknowledged_messages(
         )
 
     assert [receipt.message_id for receipt in deleted] == [701, 702, 703]
+
+
+def test_uncertain_compensating_delete_leaves_durable_cleanup_receipts(tmp_path):
+    cv = tmp_path / "cv.pdf"
+    letter = tmp_path / "cover-letter.pdf"
+    cv.write_bytes(b"%PDF-1.4\ncv")
+    letter.write_bytes(b"%PDF-1.4\nletter")
+    session = GatewaySession()
+    original_post = session.post
+
+    def fail_control_bind(url, **kwargs):
+        if url.endswith("/messages") and "control_message_id" in kwargs["json"]:
+            return Response({"error": "bind failed"}, status=503)
+        return original_post(url, **kwargs)
+
+    session.post = fail_control_bind
+    publisher = GatewayArtifactReviewPublisher(
+        endpoint="https://gateway.example",
+        internal_token="internal-secret",
+        actor_id="42",
+        chat_id="42",
+        session=session,
+        document_sender=lambda _documents: (
+            TelegramReceipt(message_id=701, chat_id="42"),
+            TelegramReceipt(message_id=702, chat_id="42"),
+        ),
+        control_sender=lambda _message: TelegramReceipt(
+            message_id=703, chat_id="42"
+        ),
+        message_deleter=lambda _receipts: (_ for _ in ()).throw(
+            RuntimeError("delete outcome unknown")
+        ),
+    )
+
+    with pytest.raises(Exception, match="durably scheduled"):
+        publisher.publish(
+            application_id=APPLICATION_ID,
+            official_vacancy_version=VACANCY_VERSION,
+            package_hash=PACKAGE_HASH,
+            run_url=RUN_URL,
+            artifacts=PreparedArtifacts(
+                version="sha256:" + "c" * 64,
+                cv_path=str(cv),
+                cover_letter_path=str(letter),
+                cv_hash="sha256:" + hashlib.sha256(cv.read_bytes()).hexdigest(),
+                cover_letter_hash=(
+                    "sha256:" + hashlib.sha256(letter.read_bytes()).hexdigest()
+                ),
+            ),
+        )
+
+    cleanup_call = next(
+        call for call in session.calls if call[0].endswith("/publication-cleanup")
+    )
+    assert cleanup_call[1]["json"] == {
+        "document_message_ids": [701, 702],
+        "control_message_id": 703,
+    }

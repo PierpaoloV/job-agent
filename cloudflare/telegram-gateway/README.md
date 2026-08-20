@@ -14,6 +14,9 @@ It exposes:
   is accepted.
 - `POST /v1/artifact-reviews/:id/decision-ack` for Actions to confirm that the
   exact decision was persisted in the authoritative state artifact.
+- `POST /v1/artifact-reviews/:id/publication-cleanup` to retain all
+  acknowledged Telegram receipts for the 24-hour sweep if publication binding
+  and the immediate compensating delete both become uncertain.
 - `POST /v1/artifact-reviews/:id/dispatch-recovery` for an explicit operator
   retry only after the corresponding GitHub run is confirmed absent.
 - `POST /telegram` for Telegram webhook updates.

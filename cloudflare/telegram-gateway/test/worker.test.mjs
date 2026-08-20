@@ -73,6 +73,28 @@ class MemoryStore {
     return { ...stored };
   }
 
+  async registerReviewPublicationCleanup(reviewId, scope, messageIds) {
+    const stored = [...this.reviews.values()].find(
+      (candidate) => candidate.reviewId === reviewId,
+    );
+    if (
+      !stored ||
+      stored.actorId !== scope.actorId ||
+      stored.chatId !== scope.chatId ||
+      ![
+        "authorizing",
+        "documents_sent",
+        "expiry_cleanup_uncertain",
+      ].includes(stored.status)
+    ) {
+      return false;
+    }
+    stored.documentMessageIds = [...messageIds.documentMessageIds];
+    stored.controlMessageId = messageIds.controlMessageId;
+    stored.status = "expiry_cleanup_uncertain";
+    return true;
+  }
+
   async consumeReviewAuthorization(token, scope, consumedAt) {
     const review = [...this.reviews.values()].find((candidate) =>
       candidate.authorizations.some((item) => item.token === token),
@@ -957,6 +979,55 @@ test("scheduled cleanup removes PDFs even when control publication never complet
   await gateway.scheduled({}, env, {});
 
   assert.deepEqual(deleted, [731, 732]);
+  assert.equal(
+    store.reviews.get("review:approved-25764671169e97eb:package-a").status,
+    "expired",
+  );
+});
+
+
+test("publication rollback receipts remain durable when direct delete is uncertain", async () => {
+  const store = new MemoryStore();
+  const deleted = [];
+  let sequence = 0;
+  let current = new Date("2026-08-20T10:00:00Z");
+  const gateway = createGateway({
+    storeFactory: () => store,
+    tokenFactory: () => `rollback-token-${++sequence}`,
+    now: () => current,
+    fetchImpl: async (_url, options) => {
+      deleted.push(JSON.parse(options.body).message_id);
+      return Response.json({ ok: true, result: true });
+    },
+  });
+  const issued = await (
+    await gateway.fetch(reviewAuthorizationRequest(), env)
+  ).json();
+  const registration = await gateway.fetch(
+    new Request(
+      `https://gateway.test/v1/artifact-reviews/${issued.review_id}/publication-cleanup`,
+      {
+        method: "POST",
+        headers: {
+          authorization: "Bearer internal-secret",
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({
+          document_message_ids: [751, 752],
+          control_message_id: 753,
+        }),
+      },
+    ),
+    env,
+  );
+  assert.deepEqual(await registration.json(), {
+    status: "expiry_cleanup_uncertain",
+  });
+  current = new Date("2026-08-21T10:00:01Z");
+
+  await gateway.scheduled({}, env, {});
+
+  assert.deepEqual(deleted, [751, 752, 753]);
   assert.equal(
     store.reviews.get("review:approved-25764671169e97eb:package-a").status,
     "expired",

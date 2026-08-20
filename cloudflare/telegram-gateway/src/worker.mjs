@@ -204,6 +204,28 @@ export class D1GatewayStore {
     };
   }
 
+  async registerReviewPublicationCleanup(reviewId, scope, messageIds) {
+    const serialized = JSON.stringify(messageIds.documentMessageIds);
+    const result = await this.database
+      .prepare(
+        "UPDATE artifact_reviews SET document_message_ids = ?1, " +
+          "control_message_id = ?2, status = 'expiry_cleanup_uncertain', " +
+          "status_evidence = 'publication_bind_failed' " +
+          "WHERE review_id = ?3 AND actor_id = ?4 AND chat_id = ?5 " +
+          "AND status IN ('authorizing', 'documents_sent', " +
+          "'expiry_cleanup_uncertain')",
+      )
+      .bind(
+        serialized,
+        messageIds.controlMessageId,
+        reviewId,
+        scope.actorId,
+        scope.chatId,
+      )
+      .run();
+    return result.meta.changes === 1;
+  }
+
   async consumeReviewAuthorization(token, scope, consumedAt) {
     const consume = await this.database
       .prepare(
@@ -370,7 +392,7 @@ export class D1GatewayStore {
       .prepare(
         "UPDATE artifact_reviews SET status = 'cleanup_uncertain', " +
           "status_evidence = ?1 WHERE review_id = ?2 " +
-          "AND status IN ('dispatch_uncertain', 'dispatch_recovering')",
+          "AND status IN ('deciding', 'cleanup_retrying')",
       )
       .bind(evidence, reviewId)
       .run();
@@ -767,6 +789,17 @@ export function createGateway({
           now,
         );
       }
+      const reviewPublicationCleanup = url.pathname.match(
+        /^\/v1\/artifact-reviews\/([A-Za-z0-9_-]{8,48})\/publication-cleanup$/u,
+      );
+      if (request.method === "POST" && reviewPublicationCleanup) {
+        return registerReviewPublicationCleanup(
+          request,
+          env,
+          storeFactory(env),
+          reviewPublicationCleanup[1],
+        );
+      }
       const reviewDispatchRecovery = url.pathname.match(
         /^\/v1\/artifact-reviews\/([A-Za-z0-9_-]{8,48})\/dispatch-recovery$/u,
       );
@@ -1075,6 +1108,49 @@ async function acknowledgeReviewDecision(
   return status
     ? json({ status })
     : json({ error: "review_decision_ack_conflict" }, 409);
+}
+
+
+async function registerReviewPublicationCleanup(
+  request,
+  env,
+  store,
+  reviewId,
+) {
+  const bearer = request.headers.get("authorization") || "";
+  const expected = `Bearer ${required(env, "INTERNAL_API_TOKEN")}`;
+  if (!(await secureEqual(bearer, expected))) {
+    return json({ error: "unauthorized" }, 401);
+  }
+  let value;
+  try {
+    value = await request.json();
+  } catch {
+    return json({ error: "invalid_json" }, 400);
+  }
+  const documentMessageIds = value?.document_message_ids;
+  const controlMessageId = value?.control_message_id ?? null;
+  if (
+    !Array.isArray(documentMessageIds) ||
+    documentMessageIds.length !== 2 ||
+    !documentMessageIds.every((item) => Number.isSafeInteger(item)) ||
+    new Set(documentMessageIds).size !== 2 ||
+    (controlMessageId !== null && !Number.isSafeInteger(controlMessageId)) ||
+    documentMessageIds.includes(controlMessageId)
+  ) {
+    return json({ error: "invalid_message_receipts" }, 400);
+  }
+  const registered = await store.registerReviewPublicationCleanup(
+    reviewId,
+    {
+      actorId: required(env, "TELEGRAM_ACTOR_ID"),
+      chatId: required(env, "TELEGRAM_CHAT_ID"),
+    },
+    { documentMessageIds, controlMessageId },
+  );
+  return registered
+    ? json({ status: "expiry_cleanup_uncertain" })
+    : json({ error: "review_cleanup_registration_conflict" }, 409);
 }
 
 
