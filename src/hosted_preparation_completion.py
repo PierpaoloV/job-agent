@@ -4,18 +4,15 @@ from __future__ import annotations
 
 import argparse
 from dataclasses import dataclass
-import html
 import json
 import os
 from pathlib import Path
 import re
 from typing import Callable, Sequence
 
-from notify_telegram import (
-    TelegramMessage,
-    TelegramSendRejected,
-    send_message,
-)
+from application_domain import PreparedArtifacts
+from hosted_artifact_review import GatewayArtifactReviewPublisher
+from notify_telegram import TelegramSendRejected
 from telegram_delivery import TelegramDeliveryLedger
 
 
@@ -25,6 +22,10 @@ _GITHUB_RUN_URL = re.compile(
     r"https://github\.com/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+/actions/runs/[1-9][0-9]*"
 )
 HOSTED_APPLICATION_STATE_VERSION = "job-agent.hosted-application-state.v1"
+HOSTED_ARTIFACT_REVIEW_DECISION_VERSION = (
+    "job-agent.hosted-artifact-review-decision.v1"
+)
+_CANONICAL_REVIEW_ID = re.compile(r"[A-Za-z0-9_-]{8,48}")
 
 
 @dataclass(frozen=True)
@@ -212,6 +213,149 @@ class HostedPreparationWorkflowCoordinator:
         return state
 
 
+@dataclass(frozen=True)
+class HostedArtifactReviewDecision:
+    version: str
+    review_id: str
+    application_id: str
+    official_vacancy_version: str
+    package_hash: str
+    action: str
+    status: str
+    actor_id: str
+    chat_id: str
+
+    def validate(self) -> None:
+        if self.version != HOSTED_ARTIFACT_REVIEW_DECISION_VERSION:
+            raise ValueError("Unsupported hosted artifact review decision version")
+        if not _CANONICAL_REVIEW_ID.fullmatch(self.review_id):
+            raise ValueError("Hosted artifact review id must be canonical")
+        if not _CANONICAL_APPLICATION_ID.fullmatch(self.application_id):
+            raise ValueError("Hosted artifact review application id must be canonical")
+        if not _CANONICAL_SHA256.fullmatch(
+            self.official_vacancy_version
+        ) or not _CANONICAL_SHA256.fullmatch(self.package_hash):
+            raise ValueError("Hosted artifact review hashes must be canonical")
+        expected_status = {
+            "approve_artifacts": "approved",
+            "regenerate_artifacts": "regenerate_requested",
+        }.get(self.action)
+        if self.status != expected_status:
+            raise ValueError("Hosted artifact review action is not canonical")
+        if not self.actor_id or not self.chat_id:
+            raise ValueError("Hosted artifact review actor scope is incomplete")
+
+    def to_dict(self) -> dict[str, str]:
+        return {
+            "version": self.version,
+            "review_id": self.review_id,
+            "application_id": self.application_id,
+            "official_vacancy_version": self.official_vacancy_version,
+            "package_hash": self.package_hash,
+            "action": self.action,
+            "status": self.status,
+            "actor_id": self.actor_id,
+            "chat_id": self.chat_id,
+        }
+
+    @classmethod
+    def from_dict(cls, value: dict) -> "HostedArtifactReviewDecision":
+        expected = {
+            "version",
+            "review_id",
+            "application_id",
+            "official_vacancy_version",
+            "package_hash",
+            "action",
+            "status",
+            "actor_id",
+            "chat_id",
+        }
+        if set(value) != expected:
+            raise ValueError("Hosted artifact review decision is not canonical")
+        decision = cls(**{key: str(value[key]) for key in expected})
+        decision.validate()
+        return decision
+
+
+class HostedArtifactReviewDecisionStore:
+    def __init__(self, root: Path) -> None:
+        self._root = Path(root)
+
+    def save(
+        self, decision: HostedArtifactReviewDecision
+    ) -> HostedArtifactReviewDecision:
+        decision.validate()
+        self._root.mkdir(parents=True, exist_ok=True, mode=0o700)
+        os.chmod(self._root, 0o700)
+        path = self._path(decision.application_id, decision.package_hash)
+        encoded = json.dumps(decision.to_dict(), indent=2, sort_keys=True) + "\n"
+        if path.exists():
+            if path.read_text(encoding="utf-8") == encoded:
+                return decision
+            raise RuntimeError("Hosted artifact review decision already differs")
+        temporary = path.with_suffix(".tmp")
+        descriptor = os.open(
+            temporary, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600
+        )
+        with os.fdopen(descriptor, "w", encoding="utf-8") as output:
+            output.write(encoded)
+            output.flush()
+            os.fsync(output.fileno())
+        os.replace(temporary, path)
+        os.chmod(path, 0o600)
+        return decision
+
+    def _path(self, application_id: str, package_hash: str) -> Path:
+        if not _CANONICAL_APPLICATION_ID.fullmatch(application_id):
+            raise ValueError("Hosted artifact review application id must be canonical")
+        if not _CANONICAL_SHA256.fullmatch(package_hash):
+            raise ValueError("Hosted artifact review package hash must be canonical")
+        return self._root / (
+            f"{application_id}-{package_hash.removeprefix('sha256:')}.json"
+        )
+
+
+def record_hosted_artifact_review_decision(
+    *,
+    application_id: str,
+    official_vacancy_version: str,
+    package_hash: str,
+    review_id: str,
+    action: str,
+    actor_id: str,
+    chat_id: str,
+    expected_actor_id: str,
+    expected_chat_id: str,
+    application_states: HostedApplicationStateStore,
+    decisions: HostedArtifactReviewDecisionStore,
+) -> HostedArtifactReviewDecision:
+    if actor_id != expected_actor_id or chat_id != expected_chat_id:
+        raise RuntimeError("Hosted artifact review actor scope does not match")
+    HostedPreparationWorkflowCoordinator(application_states).require_completed(
+        application_id=application_id,
+        official_vacancy_version=official_vacancy_version,
+        package_hash=package_hash,
+        run_url=application_states.load(application_id).run_url,
+    )
+    status = {
+        "approve_artifacts": "approved",
+        "regenerate_artifacts": "regenerate_requested",
+    }.get(action, "")
+    decision = HostedArtifactReviewDecision(
+        version=HOSTED_ARTIFACT_REVIEW_DECISION_VERSION,
+        review_id=review_id,
+        application_id=application_id,
+        official_vacancy_version=official_vacancy_version,
+        package_hash=package_hash,
+        action=action,
+        status=status,
+        actor_id=actor_id,
+        chat_id=chat_id,
+    )
+    return decisions.save(decision)
+
+
 def arm_remote_preparation_completion(
     *,
     application_id: str,
@@ -223,9 +367,10 @@ def arm_remote_preparation_completion(
 ) -> str | None:
     """Persist CV-ready state and the at-most-once Telegram send boundary."""
 
-    _, delivery_key = _completion(
+    delivery_key = _completion_delivery_key(
         application_id,
         official_vacancy_version,
+        package_hash,
         run_url,
     )
     ledger.stage_outbound(delivery_key)
@@ -258,13 +403,15 @@ def dispatch_remote_preparation_completion(
     claim_token: str,
     ledger: TelegramDeliveryLedger,
     application_states: HostedApplicationStateStore,
-    message_sender: Callable[[TelegramMessage], None] = send_message,
+    artifacts: PreparedArtifacts,
+    review_publisher: Callable[..., object],
 ) -> bool:
-    """Deliver a previously staged notification at most once."""
+    """Publish a previously staged protected review at most once."""
 
-    message, delivery_key = _completion(
+    delivery_key = _completion_delivery_key(
         application_id,
         official_vacancy_version,
+        package_hash,
         run_url,
     )
     if not ledger.outbound_claim_is_sending(delivery_key, claim_token):
@@ -278,7 +425,13 @@ def dispatch_remote_preparation_completion(
         run_url=run_url,
     )
     try:
-        message_sender(message)
+        review_publisher(
+            application_id=application_id,
+            official_vacancy_version=official_vacancy_version,
+            package_hash=package_hash,
+            run_url=run_url,
+            artifacts=artifacts,
+        )
     except TelegramSendRejected:
         ledger.requeue_outbound_rejected(delivery_key, claim_token)
         raise
@@ -296,22 +449,58 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         description="Stage or dispatch a hosted preparation completion"
     )
-    parser.add_argument("command", choices=("arm", "dispatch"))
+    parser.add_argument("command", choices=("arm", "dispatch", "decide"))
     parser.add_argument("--application-id", required=True)
     parser.add_argument("--official-vacancy-version", required=True)
-    parser.add_argument("--run-url", required=True)
+    parser.add_argument("--run-url")
     parser.add_argument("--package-hash", required=True)
     parser.add_argument("--claim-token")
+    parser.add_argument("--artifact-version")
+    parser.add_argument("--cv-path")
+    parser.add_argument("--cover-letter-path")
+    parser.add_argument("--cv-hash")
+    parser.add_argument("--cover-letter-hash")
+    parser.add_argument("--review-id")
+    parser.add_argument("--action")
+    parser.add_argument("--actor-id")
+    parser.add_argument("--chat-id")
     parser.add_argument(
         "--ledger",
         type=Path,
         default=Path("data/telegram-deliveries.sqlite"),
     )
     args = parser.parse_args(argv)
-    ledger = TelegramDeliveryLedger(args.ledger)
     application_states = HostedApplicationStateStore(
         Path("data/hosted-application-state")
     )
+    if args.command == "decide":
+        required_values = (
+            args.review_id,
+            args.action,
+            args.actor_id,
+            args.chat_id,
+        )
+        if not all(required_values):
+            raise ValueError("Hosted artifact decision arguments are incomplete")
+        record_hosted_artifact_review_decision(
+            application_id=args.application_id,
+            official_vacancy_version=args.official_vacancy_version,
+            package_hash=args.package_hash,
+            review_id=args.review_id,
+            action=args.action,
+            actor_id=args.actor_id,
+            chat_id=args.chat_id,
+            expected_actor_id=os.environ["TELEGRAM_ACTOR_ID"],
+            expected_chat_id=os.environ["TELEGRAM_CHAT_ID"],
+            application_states=application_states,
+            decisions=HostedArtifactReviewDecisionStore(
+                Path("data/hosted-artifact-review-decisions")
+            ),
+        )
+        return 0
+    if not args.run_url:
+        raise ValueError("Hosted completion requires a run URL")
+    ledger = TelegramDeliveryLedger(args.ledger)
     kwargs = {
         "application_id": args.application_id,
         "official_vacancy_version": args.official_vacancy_version,
@@ -328,9 +517,34 @@ def main(argv: Sequence[str] | None = None) -> int:
     else:
         if not args.claim_token:
             raise ValueError("Hosted completion dispatch requires a claim token")
+        artifact_values = (
+            args.artifact_version,
+            args.cv_path,
+            args.cover_letter_path,
+            args.cv_hash,
+            args.cover_letter_hash,
+        )
+        if not all(artifact_values):
+            raise ValueError(
+                "Hosted completion dispatch requires both prepared artifacts"
+            )
+        publisher = GatewayArtifactReviewPublisher(
+            endpoint=os.environ["JOB_AGENT_CALLBACK_GATEWAY_URL"],
+            internal_token=os.environ["JOB_AGENT_CALLBACK_GATEWAY_TOKEN"],
+            actor_id=os.environ["TELEGRAM_ACTOR_ID"],
+            chat_id=os.environ["TELEGRAM_CHAT_ID"],
+        )
         dispatch_remote_preparation_completion(
             **kwargs,
             claim_token=args.claim_token,
+            artifacts=PreparedArtifacts(
+                version=args.artifact_version,
+                cv_path=args.cv_path,
+                cover_letter_path=args.cover_letter_path,
+                cv_hash=args.cv_hash,
+                cover_letter_hash=args.cover_letter_hash,
+            ),
+            review_publisher=publisher.publish,
         )
     return 0
 
@@ -343,30 +557,24 @@ def _github_output(name: str, value: str) -> None:
         output.write(f"{name}={value}\n")
 
 
-def _completion(
+def _completion_delivery_key(
     application_id: str,
     official_vacancy_version: str,
+    package_hash: str,
     run_url: str,
-) -> tuple[TelegramMessage, str]:
+) -> str:
     if not _CANONICAL_APPLICATION_ID.fullmatch(str(application_id)):
         raise ValueError("Hosted completion application id must be canonical")
     if not _CANONICAL_SHA256.fullmatch(str(official_vacancy_version)):
         raise ValueError("Hosted completion vacancy version must be canonical")
+    if not _CANONICAL_SHA256.fullmatch(str(package_hash)):
+        raise ValueError("Hosted completion package hash must be canonical")
     if not _GITHUB_RUN_URL.fullmatch(str(run_url)):
         raise ValueError("Hosted completion run URL must be canonical")
-    message = TelegramMessage(
-        "✅ <b>CV e lettera pronti</b>\n\n"
-        "La preparazione remota è conclusa per "
-        f"<code>{html.escape(application_id)}</code>.\n"
-        f'<a href="{html.escape(run_url, quote=True)}">'
-        "Apri la run e il pacchetto cifrato</a>.\n\n"
-        "Nessun modulo ATS è stato compilato o inviato."
-    )
-    delivery_key = (
+    return (
         "hosted-preparation-complete:"
-        f"{application_id}:{official_vacancy_version}:message:0"
+        f"{application_id}:{official_vacancy_version}:{package_hash}:review:0"
     )
-    return message, delivery_key
 
 
 if __name__ == "__main__":
@@ -375,9 +583,13 @@ if __name__ == "__main__":
 
 __all__ = [
     "HOSTED_APPLICATION_STATE_VERSION",
+    "HOSTED_ARTIFACT_REVIEW_DECISION_VERSION",
+    "HostedArtifactReviewDecision",
+    "HostedArtifactReviewDecisionStore",
     "HostedApplicationState",
     "HostedApplicationStateStore",
     "HostedPreparationWorkflowCoordinator",
     "arm_remote_preparation_completion",
     "dispatch_remote_preparation_completion",
+    "record_hosted_artifact_review_decision",
 ]

@@ -1,4 +1,5 @@
 from pathlib import Path
+from hashlib import sha256
 import sys
 
 import pytest
@@ -82,3 +83,61 @@ def test_digest_overflow_adds_a_batch_scoped_inline_action(monkeypatch):
             "callback_data": "discovery-overflow:digest-1-abc",
         }]]
     }
+
+
+def test_protected_pdf_review_sends_both_documents_as_one_protected_group(
+    monkeypatch, tmp_path
+):
+    cv = tmp_path / "cv.pdf"
+    letter = tmp_path / "cover-letter.pdf"
+    cv.write_bytes(b"%PDF-1.4\nreview cv")
+    letter.write_bytes(b"%PDF-1.4\nreview letter")
+    calls = []
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "test-token")
+    monkeypatch.setenv("TELEGRAM_CHAT_ID", "42")
+
+    def post(url, **kwargs):
+        calls.append((url, kwargs))
+        return FakeTelegramResponse(
+            {
+                "ok": True,
+                "result": [
+                    {"message_id": 701, "chat": {"id": 42}},
+                    {"message_id": 702, "chat": {"id": 42}},
+                ],
+            }
+        )
+
+    monkeypatch.setattr(notify_telegram.requests, "post", post)
+
+    receipts = notify_telegram.send_protected_document_group(
+        (
+            notify_telegram.TelegramDocument(
+                path=cv,
+                filename="CV.pdf",
+                caption="CV su misura",
+                sha256="sha256:" + sha256(cv.read_bytes()).hexdigest(),
+            ),
+            notify_telegram.TelegramDocument(
+                path=letter,
+                filename="Lettera.pdf",
+                caption="Lettera di presentazione",
+                sha256="sha256:" + sha256(letter.read_bytes()).hexdigest(),
+            ),
+        )
+    )
+
+    assert [receipt.message_id for receipt in receipts] == [701, 702]
+    url, request = calls[0]
+    assert url == "https://api.telegram.org/bottest-token/sendMediaGroup"
+    assert request["data"]["chat_id"] == "42"
+    assert request["data"]["protect_content"] == "true"
+    assert request["data"]["media"] == (
+        '[{"type":"document","media":"attach://document_0",'
+        '"caption":"CV su misura"},{"type":"document",'
+        '"media":"attach://document_1",'
+        '"caption":"Lettera di presentazione"}]'
+    )
+    assert request["files"]["document_0"][0] == "CV.pdf"
+    assert request["files"]["document_1"][0] == "Lettera.pdf"
+    assert request["timeout"] == 30

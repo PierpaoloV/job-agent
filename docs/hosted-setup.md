@@ -20,8 +20,8 @@ submission to an applicant tracking system (ATS).
 | Send ranked digests and urgent alerts | Available | Telegram |
 | `👍`, `👎`, and `Dimmi di più` decisions | Available | Telegram webhook through Cloudflare |
 | Ask for and retain a discard reason | Available | Telegram, D1, and authoritative Actions state |
-| Prepare a tailored CV and cover letter after approval | Available | Anthropic, an encrypted short-lived artifact, and a cloud Telegram completion notice |
-| Download, review, or use the prepared files | Requires a trusted consumer | Hosted mode publishes an encrypted handoff package |
+| Prepare a tailored CV and cover letter after approval | Available | Anthropic plus an encrypted short-lived GitHub artifact |
+| Review the prepared files | Available | Two protected Telegram PDFs with one-use `Approva` / `Rigenera` controls; messages are deleted on choice or after 24 hours |
 | Fill an ATS form (`Compila`) | Not hosted | Requires a supported local browser/ATS adapter |
 | Submit an application (`Invia`) | Not hosted | Requires a supported local browser/ATS adapter and an explicit final gate |
 | Answer CAPTCHA, medical, demographic, salary, consent, or legal questions | Unsupported | Must remain a human decision |
@@ -392,7 +392,9 @@ Approved preparation
   -> deterministic claim audit and PDF rendering
   -> encrypted GitHub artifact
   -> authoritative `CV pronto` state bound to the package SHA-256
-  -> at-most-once Telegram completion notice from GitHub Actions
+  -> protected CV + cover-letter PDFs and one-use review controls on Telegram
+  -> delete the Telegram review on choice or after 24 hours
+  -> persist exact approval, or run a new Anthropic generation on `Rigenera`
   -> no hosted ATS fill or submission
 ```
 
@@ -402,8 +404,8 @@ Approved preparation
 | GitHub Actions runner | Email bodies, OAuth files, profile, preferences, evidence, CV, vacancy data | Ephemeral runner; plaintext candidate material is removed in cleanup |
 | OpenAI | Alert lead, public vacancy-resolution prompt, sanitized grading profile | Responses request uses `store: false`; provider policy still applies |
 | Anthropic | Verified vacancy, requirement matrix, and approved evidence statements | Used only after explicit preparation approval |
-| Telegram | Ranked public job summaries, links, status messages, and the user's discard reason | Retained under Telegram's service behavior |
-| Cloudflare Worker/D1 | Opaque callback capabilities, actor/chat scope, update IDs, action state, discard reason | Durable idempotency and reconciliation ledger |
+| Telegram | Ranked public job summaries, protected review PDFs, links, status messages, and the user's discard reason | Review PDFs use `protect_content` and are deleted on decision or by the 24-hour cloud sweep; Telegram is not a true view-once PDF channel |
+| Cloudflare Worker/D1 | Opaque callback capabilities, protected-message receipts, actor/chat scope, update IDs, action state, discard reason | Durable idempotency, one-use approval, and expiry reconciliation ledger |
 | GitHub Actions artifacts | Public vacancy/grade state; encrypted application package | Current workflows use 14-day state retention and 3-day package retention |
 | Canonical CV host | CV PDF | Must currently permit non-interactive HTTPS download |
 

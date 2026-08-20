@@ -86,7 +86,9 @@ are not sent to an LLM. OpenAI receives only a sanitized professional profile
 and verified official-vacancy fields for deep grading. Anthropic is used later,
 after explicit application preparation, to generate CV and cover-letter
 artifacts from bounded evidence. Telegram receives ranked public job summaries,
-clickable links, and compact opaque callback tokens. The full callback scope
+two protected review PDFs, clickable links, and compact opaque callback tokens.
+The review controls approve the exact package or request a new generation; the
+gateway deletes the review messages after the choice or after 24 hours. The full callback scope
 stays in Cloudflare D1. The gateway accepts only Telegram's configured webhook
 secret and the configured owner/chat, then creates an exact GitHub repository
 dispatch. These are intentional external data flows.

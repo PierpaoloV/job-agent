@@ -19,7 +19,11 @@ from hosted_artifact_preparation import (
     HostedPreparationInput,
     HostedPreparationInputStore,
 )
-from hosted_preparation_completion import HostedApplicationStateStore
+from hosted_preparation_completion import (
+    HostedApplicationStateStore,
+    HostedArtifactReviewDecisionStore,
+    record_hosted_artifact_review_decision,
+)
 from telegram_delivery import TelegramDeliveryLedger
 
 
@@ -58,6 +62,44 @@ def test_state_bundle_preserves_versioned_cloud_opportunity_discards(tmp_path):
 
     assert "data/opportunity-decisions.json" in manifest["files"]
     bundle.validate_manifest()
+
+
+def test_state_bundle_preserves_exact_hosted_artifact_approval(tmp_path):
+    application_id = "approved-b0a227c91dd404d4"
+    vacancy = "sha256:" + "a" * 64
+    package = "sha256:" + "b" * 64
+    states = HostedApplicationStateStore(
+        tmp_path / "data" / "hosted-application-state"
+    )
+    states.record_cv_ready(
+        application_id=application_id,
+        official_vacancy_version=vacancy,
+        package_hash=package,
+        run_url="https://github.com/PierpaoloV/job-agent/actions/runs/1",
+    )
+    record_hosted_artifact_review_decision(
+        application_id=application_id,
+        official_vacancy_version=vacancy,
+        package_hash=package,
+        review_id="review-token-123",
+        action="approve_artifacts",
+        actor_id="42",
+        chat_id="42",
+        expected_actor_id="42",
+        expected_chat_id="42",
+        application_states=states,
+        decisions=HostedArtifactReviewDecisionStore(
+            tmp_path / "data" / "hosted-artifact-review-decisions"
+        ),
+    )
+
+    manifest = StateBundle(tmp_path).write_manifest()
+
+    assert any(
+        path.startswith("data/hosted-artifact-review-decisions/")
+        for path in manifest["files"]
+    )
+    StateBundle(tmp_path).validate_manifest()
 
 
 def test_decision_run_can_publish_a_versioned_authoritative_manifest(tmp_path):

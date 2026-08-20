@@ -296,6 +296,8 @@ jobs:
       github.event_name == 'repository_dispatch'
       && github.event.action == 'telegram-opportunity-decision'
       && github.event.client_payload.action != 'prepare'
+      && github.event.client_payload.action != 'approve_artifacts'
+      && github.event.client_payload.action != 'regenerate_artifacts'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -353,6 +355,72 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
+  handle-artifact-approval:
+    if: >-
+      github.event_name == 'repository_dispatch'
+      && github.event.action == 'telegram-opportunity-decision'
+      && github.event.client_payload.action == 'approve_artifacts'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Restore exact published application state
+        env:
+          PYTHONPATH: src
+          GITHUB_TOKEN: ${{ github.token }}
+        run: >-
+          python -m actions_state restore-latest
+          --root .
+          --repository ${{ github.repository }}
+          --workflow run.yml
+          --branch ${{ github.event.repository.default_branch }}
+
+      - name: Record exact protected artifact approval
+        env:
+          PYTHONPATH: src
+          TELEGRAM_ACTOR_ID: ${{ secrets.TELEGRAM_ACTOR_ID }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          REVIEW_ID: ${{ github.event.client_payload.review_id }}
+          APPLICATION_ID: ${{ github.event.client_payload.application_id }}
+          VACANCY_VERSION: ${{ github.event.client_payload.official_vacancy_version }}
+          PACKAGE_HASH: ${{ github.event.client_payload.package_hash }}
+          ACTOR_ID: ${{ github.event.client_payload.actor_id }}
+          CHAT_ID: ${{ github.event.client_payload.chat_id }}
+        run: >-
+          python -m hosted_preparation_completion decide
+          --review-id "$REVIEW_ID"
+          --action approve_artifacts
+          --application-id "$APPLICATION_ID"
+          --official-vacancy-version "$VACANCY_VERSION"
+          --package-hash "$PACKAGE_HASH"
+          --actor-id "$ACTOR_ID"
+          --chat-id "$CHAT_ID"
+
+      - name: Package authoritative artifact approval
+        env:
+          PYTHONPATH: src
+        run: >-
+          python -m actions_state write-manifest
+          --root . --workflow run.yml
+          --branch ${{ github.event.repository.default_branch }}
+          --stage decision
+
+      - name: Publish authoritative artifact approval
+        uses: actions/upload-artifact@v4
+        with:
+          name: discovery-state-artifact-approval-${{ github.run_id }}-${{ github.run_attempt }}
+          path: data/actions-state
+          if-no-files-found: error
+          retention-days: 14
+
   prepare-artifacts:
     if: >-
       github.event_name == 'repository_dispatch'
@@ -360,7 +428,10 @@ jobs:
         github.event.action == 'prepare-application'
         || (
           github.event.action == 'telegram-opportunity-decision'
-          && github.event.client_payload.action == 'prepare'
+          && (
+            github.event.client_payload.action == 'prepare'
+            || github.event.client_payload.action == 'regenerate_artifacts'
+          )
         )
       )
     runs-on: ubuntu-latest
@@ -397,6 +468,30 @@ jobs:
           --repository ${{ github.repository }}
           --workflow run.yml
           --branch ${{ github.event.repository.default_branch }}
+
+      - name: Record exact regeneration decision
+        if: >-
+          github.event.action == 'telegram-opportunity-decision'
+          && github.event.client_payload.action == 'regenerate_artifacts'
+        env:
+          PYTHONPATH: src
+          TELEGRAM_ACTOR_ID: ${{ secrets.TELEGRAM_ACTOR_ID }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          REVIEW_ID: ${{ github.event.client_payload.review_id }}
+          APPLICATION_ID: ${{ github.event.client_payload.application_id }}
+          VACANCY_VERSION: ${{ github.event.client_payload.official_vacancy_version }}
+          PACKAGE_HASH: ${{ github.event.client_payload.package_hash }}
+          ACTOR_ID: ${{ github.event.client_payload.actor_id }}
+          CHAT_ID: ${{ github.event.client_payload.chat_id }}
+        run: >-
+          python -m hosted_preparation_completion decide
+          --review-id "$REVIEW_ID"
+          --action regenerate_artifacts
+          --application-id "$APPLICATION_ID"
+          --official-vacancy-version "$VACANCY_VERSION"
+          --package-hash "$PACKAGE_HASH"
+          --actor-id "$ACTOR_ID"
+          --chat-id "$CHAT_ID"
 
       - name: Materialize private evidence and canonical CV
         env:
@@ -440,10 +535,6 @@ jobs:
           if-no-files-found: error
           retention-days: 3
 
-      - name: Remove plaintext candidate material
-        if: always()
-        run: rm -rf data/hosted-inputs data/private/application-artifacts
-
       - name: Stage remote preparation completion
         id: completion_delivery
         env:
@@ -483,9 +574,17 @@ jobs:
           PYTHONPATH: src
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          TELEGRAM_ACTOR_ID: ${{ secrets.TELEGRAM_ACTOR_ID }}
+          JOB_AGENT_CALLBACK_GATEWAY_URL: ${{ vars.JOB_AGENT_CALLBACK_GATEWAY_URL }}
+          JOB_AGENT_CALLBACK_GATEWAY_TOKEN: ${{ secrets.JOB_AGENT_CALLBACK_GATEWAY_TOKEN }}
           APPLICATION_ID: ${{ github.event.client_payload.application_id }}
           VACANCY_VERSION: ${{ github.event.client_payload.official_vacancy_version }}
           PACKAGE_HASH: ${{ steps.prepare.outputs.package_hash }}
+          ARTIFACT_VERSION: ${{ steps.prepare.outputs.artifact_version }}
+          CV_PATH: ${{ steps.prepare.outputs.cv_path }}
+          COVER_LETTER_PATH: ${{ steps.prepare.outputs.cover_letter_path }}
+          CV_HASH: ${{ steps.prepare.outputs.cv_hash }}
+          COVER_LETTER_HASH: ${{ steps.prepare.outputs.cover_letter_hash }}
           RUN_URL: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
           COMPLETION_CLAIM_TOKEN: ${{ steps.completion_delivery.outputs.claim_token }}
         run: >-
@@ -495,6 +594,15 @@ jobs:
           --package-hash "$PACKAGE_HASH"
           --run-url "$RUN_URL"
           --claim-token "$COMPLETION_CLAIM_TOKEN"
+          --artifact-version "$ARTIFACT_VERSION"
+          --cv-path "$CV_PATH"
+          --cover-letter-path "$COVER_LETTER_PATH"
+          --cv-hash "$CV_HASH"
+          --cover-letter-hash "$COVER_LETTER_HASH"
+
+      - name: Remove plaintext candidate material
+        if: always()
+        run: rm -rf data/hosted-inputs data/private/application-artifacts
 
       - name: Package final authoritative completion state
         id: package_final_completion_state

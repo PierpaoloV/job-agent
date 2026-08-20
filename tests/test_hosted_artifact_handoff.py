@@ -504,6 +504,10 @@ def test_hosted_preparation_uses_authoritative_input_and_exports_one_package(
     ).prepare(identity=identity(), destination=destination)
 
     assert exported.path == destination
+    assert pathlib.Path(exported.artifacts.cv_path).name == "cv.pdf"
+    assert pathlib.Path(exported.artifacts.cover_letter_path).name == "cover-letter.pdf"
+    assert exported.artifacts.cv_hash.startswith("sha256:")
+    assert exported.artifacts.cover_letter_hash.startswith("sha256:")
     assert len(provider.requests) == 1
     request = provider.requests[0]
     assert request["official_vacancy"]["version"] == vacancy_version

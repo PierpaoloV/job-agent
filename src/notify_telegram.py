@@ -1,7 +1,11 @@
 """Send ranked job digest to Telegram."""
 from dataclasses import dataclass
+import hashlib
 import html
-import os, requests
+import json
+import os
+from pathlib import Path
+import requests
 from typing import Any, Callable, Mapping, Sequence
 
 
@@ -15,6 +19,14 @@ class TelegramMessage:
 class TelegramReceipt:
     message_id: int
     chat_id: str
+
+
+@dataclass(frozen=True)
+class TelegramDocument:
+    path: Path
+    filename: str
+    caption: str
+    sha256: str
 
 
 class TelegramSendRejected(RuntimeError):
@@ -34,6 +46,7 @@ def _send(
     text: str,
     parse_mode: str = "HTML",
     reply_markup: dict | None = None,
+    protect_content: bool = False,
 ) -> TelegramReceipt:
     url = f"https://api.telegram.org/bot{token}/sendMessage"
     payload = {
@@ -44,6 +57,8 @@ def _send(
     }
     if reply_markup is not None:
         payload["reply_markup"] = reply_markup
+    if protect_content:
+        payload["protect_content"] = True
     try:
         resp = requests.post(url, json=payload, timeout=15)
     except requests.RequestException as exc:
@@ -103,6 +118,119 @@ def send_message(message: TelegramMessage) -> None:
     token = os.environ["TELEGRAM_BOT_TOKEN"]
     chat_id = os.environ["TELEGRAM_CHAT_ID"]
     _send(token, chat_id, message.text, reply_markup=message.reply_markup)
+
+
+def send_protected_message(message: TelegramMessage) -> TelegramReceipt:
+    token = os.environ["TELEGRAM_BOT_TOKEN"]
+    chat_id = os.environ["TELEGRAM_CHAT_ID"]
+    return _send(
+        token,
+        chat_id,
+        message.text,
+        reply_markup=message.reply_markup,
+        protect_content=True,
+    )
+
+
+def send_protected_document_group(
+    documents: Sequence[TelegramDocument],
+) -> tuple[TelegramReceipt, ...]:
+    """Send a hash-verified PDF review group with Telegram content protection."""
+
+    items = tuple(documents)
+    if not 1 <= len(items) <= 10:
+        raise ValueError("Telegram document group requires one to ten files")
+    media = []
+    files = {}
+    for index, document in enumerate(items):
+        path = Path(document.path)
+        payload = path.read_bytes()
+        actual_hash = "sha256:" + hashlib.sha256(payload).hexdigest()
+        if actual_hash != document.sha256 or not payload.startswith(b"%PDF-"):
+            raise ValueError("Telegram review document failed PDF hash validation")
+        if not document.filename.endswith(".pdf") or Path(document.filename).name != (
+            document.filename
+        ):
+            raise ValueError("Telegram review filename must be a safe PDF name")
+        attachment = f"document_{index}"
+        media.append(
+            {
+                "type": "document",
+                "media": f"attach://{attachment}",
+                "caption": document.caption,
+            }
+        )
+        files[attachment] = (document.filename, payload, "application/pdf")
+    token = os.environ["TELEGRAM_BOT_TOKEN"]
+    chat_id = os.environ["TELEGRAM_CHAT_ID"]
+    try:
+        response = requests.post(
+            f"https://api.telegram.org/bot{token}/sendMediaGroup",
+            data={
+                "chat_id": chat_id,
+                "protect_content": "true",
+                "media": json.dumps(media, ensure_ascii=False, separators=(",", ":")),
+            },
+            files=files,
+            timeout=30,
+        )
+    except requests.RequestException as exc:
+        raise TelegramSendUncertain(
+            "Telegram protected document outcome is uncertain "
+            f"(transport={type(exc).__name__})"
+        ) from None
+    try:
+        body: Any = response.json()
+    except Exception:
+        raise TelegramSendUncertain(
+            "Telegram returned an invalid document acknowledgement"
+        ) from None
+    error_code = (
+        body.get("error_code", "unknown")
+        if isinstance(body, Mapping)
+        else "unknown"
+    )
+    if not response.ok or not isinstance(body, Mapping) or body.get("ok") is not True:
+        raise TelegramSendRejected(
+            "Telegram document send rejected "
+            f"(HTTP {response.status_code}, error_code={error_code})"
+        )
+    result = body.get("result")
+    if not isinstance(result, list) or len(result) != len(items):
+        raise TelegramSendUncertain(
+            "Telegram document acknowledgement omitted message results"
+        )
+    receipts = tuple(_receipt(item, chat_id) for item in result)
+    if len({item.message_id for item in receipts}) != len(receipts):
+        raise TelegramSendUncertain(
+            "Telegram document acknowledgement repeated message identity"
+        )
+    return receipts
+
+
+def _receipt(value: Any, expected_chat_id: str) -> TelegramReceipt:
+    if not isinstance(value, Mapping):
+        raise TelegramSendUncertain(
+            "Telegram acknowledgement omitted delivery identity"
+        )
+    chat = value.get("chat")
+    message_id = value.get("message_id")
+    if (
+        not isinstance(chat, Mapping)
+        or not isinstance(message_id, int)
+        or chat.get("id") is None
+    ):
+        raise TelegramSendUncertain(
+            "Telegram acknowledgement omitted delivery identity"
+        )
+    acknowledged_chat_id = str(chat["id"])
+    if expected_chat_id.lstrip("-").isdigit() and acknowledged_chat_id != (
+        expected_chat_id
+    ):
+        raise TelegramSendUncertain(
+            "Telegram acknowledged a different destination chat"
+        )
+    return TelegramReceipt(message_id=message_id, chat_id=acknowledged_chat_id)
 
 
 def send_digest(

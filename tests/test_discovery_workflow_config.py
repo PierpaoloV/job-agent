@@ -76,6 +76,7 @@ def test_repository_dispatch_completes_preparation_and_notifies_from_cloud():
     assert "github.event.action == 'prepare-application'" in prepare
     assert "github.event.action == 'telegram-opportunity-decision'" in prepare
     assert "github.event.client_payload.action == 'prepare'" in prepare
+    assert "github.event.client_payload.action == 'regenerate_artifacts'" in prepare
     assert "client_payload.application_id" in prepare
     assert "client_payload.official_vacancy_version" in prepare
     assert "JOB_AGENT_ARTIFACT_HANDOFF_KEY" in prepare
@@ -119,6 +120,23 @@ def test_repository_dispatch_completes_preparation_and_notifies_from_cloud():
     assert '--claim-token "$COMPLETION_CLAIM_TOKEN"' in prepare
     assert "TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}" in prepare
     assert "TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}" in prepare
+    assert "TELEGRAM_ACTOR_ID: ${{ secrets.TELEGRAM_ACTOR_ID }}" in prepare
+    assert (
+        "JOB_AGENT_CALLBACK_GATEWAY_URL: "
+        "${{ vars.JOB_AGENT_CALLBACK_GATEWAY_URL }}" in prepare
+    )
+    assert (
+        "JOB_AGENT_CALLBACK_GATEWAY_TOKEN: "
+        "${{ secrets.JOB_AGENT_CALLBACK_GATEWAY_TOKEN }}" in prepare
+    )
+    for output_name in (
+        "artifact_version",
+        "cv_path",
+        "cover_letter_path",
+        "cv_hash",
+        "cover_letter_hash",
+    ):
+        assert f"steps.prepare.outputs.{output_name}" in prepare
     assert "--stage prepare" in prepare
     assert "discovery-state-prepare-staged-" in prepare
     assert "discovery-state-prepare-final-" in prepare
@@ -128,6 +146,9 @@ def test_repository_dispatch_completes_preparation_and_notifies_from_cloud():
     assert prepare.index(
         "Publish authoritative completion state before notification"
     ) < prepare.index("Notify that CV and letter are ready")
+    assert prepare.index("Notify that CV and letter are ready") < prepare.index(
+        "Remove plaintext candidate material"
+    )
     assert prepare.index("Notify that CV and letter are ready") < prepare.index(
         "Publish final authoritative completion state"
     )
@@ -207,7 +228,7 @@ def test_deep_state_is_published_before_a_candidate_can_dispatch_preparation():
 def test_cloud_decisions_restore_exact_state_and_persist_discards():
     text = WORKFLOW.read_text(encoding="utf-8")
     decision = _job_block(
-        text, "handle-opportunity-decision", "prepare-artifacts"
+        text, "handle-opportunity-decision", "handle-artifact-approval"
     )
 
     assert "telegram-opportunity-decision" in text
@@ -220,3 +241,29 @@ def test_cloud_decisions_restore_exact_state_and_persist_discards():
     assert "python -m actions_state write-manifest" in decision
     assert "discovery-state-decision-" in decision
     assert "group: job-agent-authoritative-state" in text
+
+
+def test_artifact_review_decisions_are_validated_and_persisted_before_action():
+    text = WORKFLOW.read_text(encoding="utf-8")
+    approval = _job_block(
+        text, "handle-artifact-approval", "prepare-artifacts"
+    )
+    prepare = _job_block(text, "prepare-artifacts", None)
+
+    assert "approve_artifacts" in approval
+    assert "python -m actions_state restore-latest" in approval
+    assert "python -m hosted_preparation_completion decide" in approval
+    assert '--review-id "$REVIEW_ID"' in approval
+    assert '--package-hash "$PACKAGE_HASH"' in approval
+    assert "TELEGRAM_ACTOR_ID: ${{ secrets.TELEGRAM_ACTOR_ID }}" in approval
+    assert "TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}" in approval
+    assert "python -m actions_state write-manifest" in approval
+    assert "discovery-state-artifact-approval-" in approval
+
+    assert "regenerate_artifacts" in prepare
+    assert prepare.index("Restore exact authoritative grading inputs") < prepare.index(
+        "Record exact regeneration decision"
+    )
+    assert prepare.index("Record exact regeneration decision") < prepare.index(
+        "Generate, audit, render, and encrypt CV plus cover letter"
+    )

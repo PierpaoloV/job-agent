@@ -9,7 +9,166 @@ class MemoryStore {
     this.groups = new Map();
     this.updates = new Map();
     this.pendingDiscards = new Map();
+    this.reviews = new Map();
     this.failDiscardPromptBind = false;
+  }
+
+  async issueReviewAuthorizationSet(eventKey, review, records) {
+    if (!this.reviews.has(eventKey)) {
+      this.reviews.set(eventKey, {
+        ...review,
+        status: "authorizing",
+        authorizations: records.map((record) => ({ ...record })),
+      });
+    }
+    const stored = this.reviews.get(eventKey);
+    return {
+      review: { ...stored },
+      authorizations: stored.authorizations.map((record) => ({ ...record })),
+    };
+  }
+
+  async bindReviewMessages(reviewId, scope, messageIds) {
+    const stored = [...this.reviews.values()].find(
+      (candidate) => candidate.reviewId === reviewId,
+    );
+    if (
+      !stored ||
+      stored.actorId !== scope.actorId ||
+      stored.chatId !== scope.chatId
+    ) {
+      return null;
+    }
+    if (stored.status === "pending") {
+      return stored.documentMessageIds.join(",") ===
+        messageIds.documentMessageIds.join(",") &&
+        stored.controlMessageId === messageIds.controlMessageId
+        ? { ...stored }
+        : null;
+    }
+    if (stored.status !== "authorizing") {
+      return null;
+    }
+    stored.documentMessageIds = [...messageIds.documentMessageIds];
+    stored.controlMessageId = messageIds.controlMessageId;
+    stored.status = "pending";
+    return { ...stored };
+  }
+
+  async consumeReviewAuthorization(token, scope, consumedAt) {
+    const review = [...this.reviews.values()].find((candidate) =>
+      candidate.authorizations.some((item) => item.token === token),
+    );
+    const authorization = review?.authorizations.find(
+      (item) => item.token === token,
+    );
+    if (
+      !review ||
+      !authorization ||
+      authorization.status === "consumed" ||
+      review.status !== "pending" ||
+      review.actorId !== scope.actorId ||
+      review.chatId !== scope.chatId ||
+      new Date(review.expiresAt) <= new Date(consumedAt)
+    ) {
+      return null;
+    }
+    authorization.status = "consumed";
+    review.status = "deciding";
+    review.decision = authorization.action;
+    return {
+      reviewId: review.reviewId,
+      action: authorization.action,
+      applicationId: review.applicationId,
+      vacancyVersion: review.vacancyVersion,
+      packageHash: review.packageHash,
+      actorId: review.actorId,
+      chatId: review.chatId,
+      documentMessageIds: [...review.documentMessageIds],
+      controlMessageId: review.controlMessageId,
+    };
+  }
+
+  async markReviewDecided(reviewId, status, decidedAt) {
+    const review = [...this.reviews.values()].find(
+      (candidate) => candidate.reviewId === reviewId,
+    );
+    review.status = status;
+    review.decidedAt = decidedAt;
+  }
+
+  async markReviewCleanupUncertain(reviewId, evidence) {
+    const review = [...this.reviews.values()].find(
+      (candidate) => candidate.reviewId === reviewId,
+    );
+    review.status = "cleanup_uncertain";
+    review.evidence = evidence;
+  }
+
+  async markReviewDispatchUncertain(reviewId, evidence) {
+    const review = [...this.reviews.values()].find(
+      (candidate) => candidate.reviewId === reviewId,
+    );
+    review.status = "dispatch_uncertain";
+    review.evidence = evidence;
+  }
+
+  async claimExpiredReviews(observedAt) {
+    const expired = [];
+    for (const review of this.reviews.values()) {
+      if (
+        ["pending", "expiring", "expiry_cleanup_uncertain"].includes(
+          review.status,
+        ) &&
+        new Date(review.expiresAt) <= new Date(observedAt)
+      ) {
+        review.status = "expiring";
+        expired.push({
+          reviewId: review.reviewId,
+          chatId: review.chatId,
+          documentMessageIds: [...review.documentMessageIds],
+          controlMessageId: review.controlMessageId,
+        });
+      }
+    }
+    return expired;
+  }
+
+  async claimDecisionCleanupRetries() {
+    const retries = [];
+    for (const review of this.reviews.values()) {
+      if (["cleanup_uncertain", "cleanup_retrying"].includes(review.status)) {
+        review.status = "cleanup_retrying";
+        retries.push({
+          reviewId: review.reviewId,
+          action: review.decision,
+          applicationId: review.applicationId,
+          vacancyVersion: review.vacancyVersion,
+          packageHash: review.packageHash,
+          actorId: review.actorId,
+          chatId: review.chatId,
+          documentMessageIds: [...review.documentMessageIds],
+          controlMessageId: review.controlMessageId,
+        });
+      }
+    }
+    return retries;
+  }
+
+  async markReviewExpired(reviewId, expiredAt) {
+    const review = [...this.reviews.values()].find(
+      (candidate) => candidate.reviewId === reviewId,
+    );
+    review.status = "expired";
+    review.decidedAt = expiredAt;
+  }
+
+  async markReviewExpiryUncertain(reviewId, evidence) {
+    const review = [...this.reviews.values()].find(
+      (candidate) => candidate.reviewId === reviewId,
+    );
+    review.status = "expiry_cleanup_uncertain";
+    review.evidence = evidence;
   }
 
   async issueAuthorizationSet(groupKey, records) {
@@ -251,6 +410,387 @@ test("authorized issuer returns stable short-lived role controls", async () => {
           record.applicationId === body.application_id &&
           record.vacancyVersion === body.official_vacancy_version,
       ),
+  );
+});
+
+
+test("review issuer returns stable package-scoped approval controls", async () => {
+  const store = new MemoryStore();
+  let sequence = 0;
+  const gateway = createGateway({
+    storeFactory: () => store,
+    tokenFactory: () => `review-token-${++sequence}`,
+    now: () => new Date("2026-08-20T10:00:00Z"),
+  });
+  const body = {
+    event_id: "review:approved-25764671169e97eb:package-a",
+    application_id: "approved-25764671169e97eb",
+    official_vacancy_version: `sha256:${"a".repeat(64)}`,
+    package_hash: `sha256:${"b".repeat(64)}`,
+    actor_id: "123456789",
+    chat_id: "123456789",
+  };
+  const request = () =>
+    new Request("https://gateway.test/v1/review-authorizations", {
+      method: "POST",
+      headers: {
+        authorization: "Bearer internal-secret",
+        "content-type": "application/json",
+      },
+      body: JSON.stringify(body),
+    });
+
+  const first = await (await gateway.fetch(request(), env)).json();
+  const replay = await (await gateway.fetch(request(), env)).json();
+
+  assert.deepEqual(replay, first);
+  assert.match(first.review_id, /^review-token-/u);
+  assert.equal(first.expires_at, "2026-08-21T10:00:00.000Z");
+  assert.deepEqual(
+    first.buttons.map((button) => button.text),
+    ["✅ Approva", "🔄 Rigenera"],
+  );
+  assert.ok(
+    first.buttons.every(
+      (button) =>
+        button.callback_data.startsWith("jar1:review-token-") &&
+        button.callback_data.length <= 64,
+    ),
+  );
+  const stored = store.reviews.get(body.event_id);
+  assert.equal(stored.applicationId, body.application_id);
+  assert.equal(stored.vacancyVersion, body.official_vacancy_version);
+  assert.equal(stored.packageHash, body.package_hash);
+  assert.deepEqual(
+    stored.authorizations.map((record) => record.action),
+    ["approve_artifacts", "regenerate_artifacts"],
+  );
+});
+
+
+test("review message receipts bind once to the exact protected review", async () => {
+  const store = new MemoryStore();
+  let sequence = 0;
+  const gateway = createGateway({
+    storeFactory: () => store,
+    tokenFactory: () => `bind-token-${++sequence}`,
+    now: () => new Date("2026-08-20T10:00:00Z"),
+  });
+  const issued = await (
+    await gateway.fetch(reviewAuthorizationRequest(), env)
+  ).json();
+  const bindRequest = (documentMessageIds = [701, 702]) =>
+    new Request(
+      `https://gateway.test/v1/artifact-reviews/${issued.review_id}/messages`,
+      {
+        method: "POST",
+        headers: {
+          authorization: "Bearer internal-secret",
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({
+          document_message_ids: documentMessageIds,
+          control_message_id: 703,
+        }),
+      },
+    );
+
+  const first = await gateway.fetch(bindRequest(), env);
+  const replay = await gateway.fetch(bindRequest(), env);
+  const mismatch = await gateway.fetch(bindRequest([801, 802]), env);
+
+  assert.equal(first.status, 200);
+  assert.deepEqual(await first.json(), { status: "pending" });
+  assert.equal(replay.status, 200);
+  assert.equal(mismatch.status, 409);
+  const stored = store.reviews.get(
+    "review:approved-25764671169e97eb:package-a",
+  );
+  assert.deepEqual(stored.documentMessageIds, [701, 702]);
+  assert.equal(stored.controlMessageId, 703);
+  assert.equal(stored.status, "pending");
+});
+
+
+test("artifact approval deletes protected review then dispatches exact package once", async () => {
+  const store = new MemoryStore();
+  const calls = [];
+  let sequence = 0;
+  const gateway = createGateway({
+    storeFactory: () => store,
+    tokenFactory: () => `approve-token-${++sequence}`,
+    now: () => new Date("2026-08-20T10:00:00Z"),
+    fetchImpl: async (url, options) => {
+      calls.push({ url: String(url), options });
+      if (String(url).includes("api.github.com")) {
+        return new Response(null, { status: 204 });
+      }
+      return Response.json({ ok: true, result: true });
+    },
+  });
+  const issued = await (
+    await gateway.fetch(reviewAuthorizationRequest(), env)
+  ).json();
+  await gateway.fetch(
+    reviewBindRequest(issued.review_id, [701, 702], 703),
+    env,
+  );
+  const approveToken = issued.buttons[0].callback_data.slice("jar1:".length);
+  const request = () =>
+    callbackRequest({
+      updateId: 61,
+      messageId: 703,
+      token: approveToken,
+      prefix: "jar1:",
+    });
+
+  const first = await gateway.fetch(request(), env);
+  const duplicate = await gateway.fetch(request(), env);
+
+  assert.equal(first.status, 200);
+  assert.equal(duplicate.status, 200);
+  const deletes = calls.filter(({ url }) => url.endsWith("/deleteMessage"));
+  assert.deepEqual(
+    deletes.map(({ options }) => JSON.parse(options.body).message_id),
+    [701, 702, 703],
+  );
+  assert.ok(
+    deletes.every(
+      ({ options }) => JSON.parse(options.body).chat_id === "123456789",
+    ),
+  );
+  const dispatches = calls.filter(({ url }) =>
+    url.includes("api.github.com"),
+  );
+  assert.equal(dispatches.length, 1);
+  assert.deepEqual(JSON.parse(dispatches[0].options.body), {
+    event_type: "telegram-opportunity-decision",
+    client_payload: {
+      action: "approve_artifacts",
+      review_id: issued.review_id,
+      application_id: "approved-25764671169e97eb",
+      official_vacancy_version: `sha256:${"a".repeat(64)}`,
+      package_hash: `sha256:${"b".repeat(64)}`,
+      telegram_update_id: "61",
+      actor_id: "123456789",
+      chat_id: "123456789",
+    },
+  });
+  assert.equal(
+    store.reviews.get("review:approved-25764671169e97eb:package-a").status,
+    "approved",
+  );
+  assert.equal(store.updates.get(61).status, "dispatched");
+});
+
+
+test("artifact regeneration deletes review and dispatches a fresh generation", async () => {
+  const store = new MemoryStore();
+  const calls = [];
+  let sequence = 0;
+  const gateway = createGateway({
+    storeFactory: () => store,
+    tokenFactory: () => `regenerate-token-${++sequence}`,
+    now: () => new Date("2026-08-20T10:00:00Z"),
+    fetchImpl: async (url, options) => {
+      calls.push({ url: String(url), options });
+      return String(url).includes("api.github.com")
+        ? new Response(null, { status: 204 })
+        : Response.json({ ok: true, result: true });
+    },
+  });
+  const issued = await (
+    await gateway.fetch(reviewAuthorizationRequest(), env)
+  ).json();
+  await gateway.fetch(
+    reviewBindRequest(issued.review_id, [721, 722], 723),
+    env,
+  );
+  const token = issued.buttons[1].callback_data.slice("jar1:".length);
+
+  await gateway.fetch(
+    callbackRequest({
+      updateId: 62,
+      messageId: 723,
+      token,
+      prefix: "jar1:",
+    }),
+    env,
+  );
+
+  const dispatch = calls.find(({ url }) => url.includes("api.github.com"));
+  assert.equal(
+    JSON.parse(dispatch.options.body).client_payload.action,
+    "regenerate_artifacts",
+  );
+  assert.equal(
+    JSON.parse(dispatch.options.body).client_payload.review_id,
+    issued.review_id,
+  );
+  assert.equal(
+    store.reviews.get("review:approved-25764671169e97eb:package-a").status,
+    "regenerate_requested",
+  );
+});
+
+
+test("a partial decision cleanup is reconciled before GitHub dispatch", async () => {
+  const store = new MemoryStore();
+  let sequence = 0;
+  const attempts = new Map();
+  const github = [];
+  const gateway = createGateway({
+    storeFactory: () => store,
+    tokenFactory: () => `cleanup-token-${++sequence}`,
+    now: () => new Date("2026-08-20T10:00:00Z"),
+    fetchImpl: async (url, options) => {
+      if (String(url).includes("api.github.com")) {
+        github.push(JSON.parse(options.body));
+        return new Response(null, { status: 204 });
+      }
+      if (!String(url).endsWith("/deleteMessage")) {
+        return Response.json({ ok: true, result: true });
+      }
+      const messageId = JSON.parse(options.body).message_id;
+      const count = (attempts.get(messageId) || 0) + 1;
+      attempts.set(messageId, count);
+      if (messageId === 702 && count === 1) {
+        throw new Error("temporary Telegram transport failure");
+      }
+      if (messageId === 701 && count === 2) {
+        return Response.json(
+          {
+            ok: false,
+            error_code: 400,
+            description: "Bad Request: message to delete not found",
+          },
+          { status: 400 },
+        );
+      }
+      return Response.json({ ok: true, result: true });
+    },
+  });
+  const issued = await (
+    await gateway.fetch(reviewAuthorizationRequest(), env)
+  ).json();
+  await gateway.fetch(
+    reviewBindRequest(issued.review_id, [701, 702], 703),
+    env,
+  );
+  const token = issued.buttons[0].callback_data.slice("jar1:".length);
+
+  await gateway.fetch(
+    callbackRequest({
+      updateId: 63,
+      messageId: 703,
+      token,
+      prefix: "jar1:",
+    }),
+    env,
+  );
+  assert.equal(github.length, 0);
+
+  await gateway.scheduled({}, env, {});
+
+  assert.equal(github.length, 1);
+  assert.equal(github[0].client_payload.action, "approve_artifacts");
+  assert.equal(github[0].client_payload.review_id, issued.review_id);
+  assert.equal(
+    store.reviews.get("review:approved-25764671169e97eb:package-a").status,
+    "approved",
+  );
+});
+
+
+test("scheduled cleanup deletes an undecided protected review after 24 hours once", async () => {
+  const store = new MemoryStore();
+  const calls = [];
+  let sequence = 0;
+  let current = new Date("2026-08-20T10:00:00Z");
+  const gateway = createGateway({
+    storeFactory: () => store,
+    tokenFactory: () => `expiry-token-${++sequence}`,
+    now: () => current,
+    fetchImpl: async (url, options) => {
+      calls.push({ url: String(url), options });
+      return Response.json({ ok: true, result: true });
+    },
+  });
+  const issued = await (
+    await gateway.fetch(reviewAuthorizationRequest(), env)
+  ).json();
+  await gateway.fetch(
+    reviewBindRequest(issued.review_id, [711, 712], 713),
+    env,
+  );
+  current = new Date("2026-08-21T10:00:01Z");
+
+  await gateway.scheduled({}, env, {});
+  await gateway.scheduled({}, env, {});
+
+  const deletes = calls.filter(({ url }) => url.endsWith("/deleteMessage"));
+  assert.deepEqual(
+    deletes.map(({ options }) => JSON.parse(options.body).message_id),
+    [711, 712, 713],
+  );
+  assert.equal(
+    calls.filter(({ url }) => url.includes("api.github.com")).length,
+    0,
+  );
+  assert.equal(
+    store.reviews.get("review:approved-25764671169e97eb:package-a").status,
+    "expired",
+  );
+});
+
+
+test("scheduled cleanup resumes safely after a partial Telegram delete", async () => {
+  const store = new MemoryStore();
+  let sequence = 0;
+  let current = new Date("2026-08-20T10:00:00Z");
+  const attempts = new Map();
+  const gateway = createGateway({
+    storeFactory: () => store,
+    tokenFactory: () => `resume-token-${++sequence}`,
+    now: () => current,
+    fetchImpl: async (_url, options) => {
+      const messageId = JSON.parse(options.body).message_id;
+      const count = (attempts.get(messageId) || 0) + 1;
+      attempts.set(messageId, count);
+      if (messageId === 712 && count === 1) {
+        throw new Error("temporary Telegram transport failure");
+      }
+      if (messageId === 711 && count === 2) {
+        return Response.json(
+          {
+            ok: false,
+            error_code: 400,
+            description: "Bad Request: message to delete not found",
+          },
+          { status: 400 },
+        );
+      }
+      return Response.json({ ok: true, result: true });
+    },
+  });
+  const issued = await (
+    await gateway.fetch(reviewAuthorizationRequest(), env)
+  ).json();
+  await gateway.fetch(
+    reviewBindRequest(issued.review_id, [711, 712], 713),
+    env,
+  );
+  current = new Date("2026-08-21T10:00:01Z");
+
+  await gateway.scheduled({}, env, {});
+  await gateway.scheduled({}, env, {});
+
+  assert.equal(attempts.get(711), 2);
+  assert.equal(attempts.get(712), 2);
+  assert.equal(attempts.get(713), 1);
+  assert.equal(
+    store.reviews.get("review:approved-25764671169e97eb:package-a").status,
+    "expired",
   );
 });
 
@@ -797,12 +1337,50 @@ function issueTestAuthorization(gateway, eventId) {
 }
 
 
+function reviewAuthorizationRequest() {
+  return new Request("https://gateway.test/v1/review-authorizations", {
+    method: "POST",
+    headers: {
+      authorization: "Bearer internal-secret",
+      "content-type": "application/json",
+    },
+    body: JSON.stringify({
+      event_id: "review:approved-25764671169e97eb:package-a",
+      application_id: "approved-25764671169e97eb",
+      official_vacancy_version: `sha256:${"a".repeat(64)}`,
+      package_hash: `sha256:${"b".repeat(64)}`,
+      actor_id: "123456789",
+      chat_id: "123456789",
+    }),
+  });
+}
+
+
+function reviewBindRequest(reviewId, documentMessageIds, controlMessageId) {
+  return new Request(
+    `https://gateway.test/v1/artifact-reviews/${reviewId}/messages`,
+    {
+      method: "POST",
+      headers: {
+        authorization: "Bearer internal-secret",
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        document_message_ids: documentMessageIds,
+        control_message_id: controlMessageId,
+      }),
+    },
+  );
+}
+
+
 function callbackRequest({
   updateId,
   actorId = 123456789,
   chatId = 123456789,
   messageId = 1,
   token,
+  prefix = "ja1:",
 }) {
   return new Request("https://gateway.test/telegram", {
     method: "POST",
@@ -819,7 +1397,7 @@ function callbackRequest({
           message_id: messageId,
           chat: { id: chatId },
         },
-        data: `ja1:${token}`,
+        data: `${prefix}${token}`,
       },
     }),
   });

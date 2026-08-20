@@ -21,7 +21,10 @@ from hosted_artifact_preparation import (
     HostedPreparationInput,
     hosted_preparation_input_filename,
 )
-from hosted_preparation_completion import HostedApplicationState
+from hosted_preparation_completion import (
+    HostedApplicationState,
+    HostedArtifactReviewDecision,
+)
 from workflow import ShortlistArtifact
 
 
@@ -176,6 +179,17 @@ class StateBundle:
                     if path.is_file()
                 )
             )
+        artifact_review_decisions = (
+            self.root / "data" / "hosted-artifact-review-decisions"
+        )
+        if artifact_review_decisions.exists():
+            files.extend(
+                sorted(
+                    path
+                    for path in artifact_review_decisions.rglob("*.json")
+                    if path.is_file()
+                )
+            )
         return tuple(path for path in files if path.is_file())
 
     def _clear_package(self) -> None:
@@ -301,6 +315,10 @@ def _allowed_state_path(path: Path) -> bool:
         len(path.parts) == 3
         and path.parts[:2] == ("data", "hosted-application-state")
         and path.suffix == ".json"
+    ) or (
+        len(path.parts) == 3
+        and path.parts[:2] == ("data", "hosted-artifact-review-decisions")
+        and path.suffix == ".json"
     )
 
 
@@ -324,6 +342,9 @@ def _validate_embedded_version(relative: Path, path: Path) -> None:
         return
     elif _is_hosted_application_state_path(relative):
         _validate_hosted_application_state(relative, path)
+        return
+    elif _is_hosted_artifact_review_decision_path(relative):
+        _validate_hosted_artifact_review_decision(relative, path)
         return
     if expected is None:
         if relative == Path("data/telegram-deliveries.sqlite"):
@@ -422,6 +443,41 @@ def _validate_hosted_application_state(relative: Path, path: Path) -> None:
     if relative.name != f"{parsed.application_id}.json":
         raise ValueError(
             f"Invalid hosted application state identity: {relative}"
+        )
+
+
+def _is_hosted_artifact_review_decision_path(relative: Path) -> bool:
+    return (
+        len(relative.parts) == 3
+        and relative.parts[:2] == ("data", "hosted-artifact-review-decisions")
+        and relative.suffix == ".json"
+    )
+
+
+def _validate_hosted_artifact_review_decision(
+    relative: Path, path: Path
+) -> None:
+    try:
+        value = json.loads(path.read_text(encoding="utf-8"))
+        if not isinstance(value, dict):
+            raise ValueError
+        parsed = HostedArtifactReviewDecision.from_dict(value)
+    except (json.JSONDecodeError, TypeError, ValueError) as exc:
+        raise ValueError(
+            f"Invalid hosted artifact review decision: {relative}"
+        ) from exc
+    if value != parsed.to_dict():
+        raise ValueError(
+            "Invalid hosted artifact review decision: non-canonical fields in "
+            f"{relative}"
+        )
+    expected = (
+        f"{parsed.application_id}-"
+        f"{parsed.package_hash.removeprefix('sha256:')}.json"
+    )
+    if relative.name != expected:
+        raise ValueError(
+            f"Invalid hosted artifact review decision identity: {relative}"
         )
 
 

@@ -13,7 +13,7 @@ import re
 from typing import Any, Mapping, Sequence
 
 from application_composition import build_application_artifact_service
-from application_domain import ArtifactFamily, OfficialVacancy
+from application_domain import ArtifactFamily, OfficialVacancy, PreparedArtifacts
 from application_identity import approved_application_id
 from hosted_artifact_handoff import (
     ArtifactHandoffAuthority,
@@ -348,7 +348,7 @@ class HostedArtifactPreparationService:
         *,
         identity: ArtifactHandoffIdentity,
         destination: Path,
-    ) -> EncryptedArtifactPackage:
+    ) -> "HostedPreparationResult":
         try:
             value = self._inputs.load(
                 identity.application_id,
@@ -372,11 +372,28 @@ class HostedArtifactPreparationService:
             value.opportunity,
             value.official_vacancy,
         )
-        return self._handoff.export(
+        package = self._handoff.export(
             identity=identity,
             artifacts=artifacts,
             destination=Path(destination),
         )
+        return HostedPreparationResult(package=package, artifacts=artifacts)
+
+
+@dataclass(frozen=True)
+class HostedPreparationResult:
+    """Encrypted handoff plus the short-lived plaintext review artifacts."""
+
+    package: EncryptedArtifactPackage
+    artifacts: PreparedArtifacts
+
+    @property
+    def path(self) -> Path:
+        return self.package.path
+
+    @property
+    def package_hash(self) -> str:
+        return self.package.package_hash
 
 
 def _intent_id(identity: ArtifactHandoffIdentity) -> str:
@@ -465,6 +482,11 @@ def main(argv: Sequence[str] | None = None) -> int:
     ).prepare(identity=identity, destination=args.output)
     _github_output("artifact_name", identity.artifact_name)
     _github_output("package_hash", package.package_hash)
+    _github_output("artifact_version", package.artifacts.version)
+    _github_output("cv_path", package.artifacts.cv_path)
+    _github_output("cover_letter_path", package.artifacts.cover_letter_path)
+    _github_output("cv_hash", package.artifacts.cv_hash)
+    _github_output("cover_letter_hash", package.artifacts.cover_letter_hash)
     return 0
 
 
@@ -477,6 +499,7 @@ __all__ = [
     "HostedArtifactPreparationService",
     "HostedPreparationInput",
     "HostedPreparationInputStore",
+    "HostedPreparationResult",
     "hosted_preparation_input_filename",
     "main",
 ]
