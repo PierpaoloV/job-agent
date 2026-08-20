@@ -562,7 +562,9 @@ def normalize_cv_text(value: str) -> str:
 
     normalized = unicodedata.normalize("NFKC", str(value))
     normalized = re.sub(r"[‐‑‒–—−]", "-", normalized)
+    normalized = re.sub(r"(?<=\w)-[ \t]*\r?\n[ \t]*(?=\w)", "", normalized)
     normalized = re.sub(r"-\s+", "-", normalized)
+    normalized = re.sub(r"(?<=\w)-(?=\w)", "", normalized)
     return " ".join(normalized.split()).casefold()
 
 

@@ -23,6 +23,7 @@ from application_artifacts import (  # noqa: E402
     RequirementStatus,
     TruthfulApplicationArtifactService,
     canonical_cv_evidence_id,
+    normalize_cv_text,
 )
 from application_domain import OfficialVacancy, PreparedArtifacts  # noqa: E402
 
@@ -35,6 +36,15 @@ class ReloadableEvidenceSource:
     def load(self):
         self.load_calls += 1
         return self.snapshot
+
+
+def test_cv_comparison_ignores_pdf_line_wrap_hyphenation():
+    assert normalize_cv_text("Built reproduc-\nible pipelines.") == normalize_cv_text(
+        "Built reproducible pipelines."
+    )
+    assert normalize_cv_text("Built machine-\nlearning pipelines.") == normalize_cv_text(
+        "Built machine-learning pipelines."
+    )
 
 
 class FakeBundleGenerator:
