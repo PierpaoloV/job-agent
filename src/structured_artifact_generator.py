@@ -69,7 +69,7 @@ class AnthropicArtifactProvider:
                 },
                 json={
                     "model": self._model,
-                    "max_tokens": 12_000,
+                    "max_tokens": 8_000,
                     "system": _SYSTEM_PROMPT,
                     "messages": [
                         {
@@ -86,7 +86,7 @@ class AnthropicArtifactProvider:
                         }
                     },
                 },
-                timeout=120,
+                timeout=300,
             )
             response.raise_for_status()
             payload = response.json()

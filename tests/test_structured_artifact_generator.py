@@ -384,6 +384,7 @@ def test_uses_one_sonnet_structured_output_request_for_the_whole_bundle():
     url, kwargs = post.calls[0]
     assert url == "https://api.anthropic.com/v1/messages"
     assert kwargs["json"]["model"] == "claude-sonnet-4-6"
+    assert kwargs["json"]["max_tokens"] == 8_000
     assert kwargs["json"]["output_config"]["format"]["type"] == "json_schema"
     encoded_schema = __import__("json").dumps(
         kwargs["json"]["output_config"]["format"]["schema"]
@@ -415,7 +416,7 @@ def test_uses_one_sonnet_structured_output_request_for_the_whole_bundle():
         "cover_letter_source_paragraphs",
     ]
     assert kwargs["headers"]["x-api-key"] == "test-secret"
-    assert kwargs["timeout"] == 120
+    assert kwargs["timeout"] == 300
 
 
 def test_contact_display_is_derived_from_canonical_cv_not_model_formatting():
