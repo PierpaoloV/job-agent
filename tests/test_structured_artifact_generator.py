@@ -587,6 +587,45 @@ def test_unjustified_selected_evidence_is_excluded_from_both_documents():
     )
 
 
+def test_requirement_selection_always_prioritizes_selected_skill_evidence():
+    impact = EvidenceRecord(
+        evidence_id="research-impact",
+        families=(ArtifactFamily.RESEARCH,),
+        kinds=(EvidenceKind.IMPACT,),
+        approved_statement="Improved a relevant research evaluation workflow.",
+        source_reference="master-cv:impact",
+    )
+    request = tailoring_request()
+    impact_requirement = RequirementEvidence(
+        id="req-impact",
+        requirement="Research evaluation",
+        importance=RequirementImportance.REQUIRED,
+        status=RequirementStatus.MATCHED,
+        evidence_ids=("research-impact",),
+        explanation="Approved impact evidence is present.",
+    )
+    matrix = replace(request.matrix, rows=(*request.matrix.rows, impact_requirement))
+
+    generated = StructuredArtifactGenerator(
+        RecordingProvider(
+            professional_selection(
+                selected_evidence_ids=["python-research", "research-impact"],
+                target_requirement_ids=["req-impact"],
+            )
+        ),
+        candidate_name="Synthetic Candidate",
+    ).generate(
+        replace(
+            request,
+            evidence=(*request.evidence, impact),
+            matrix=matrix,
+        )
+    )
+
+    assert "Uses Python to build reproducible" in generated.cover_letter_text
+    assert "Python" in generated.cover_letter_text
+
+
 def test_structured_generation_rejects_fields_mixed_across_source_roles():
     second_role = "\n".join(
         (

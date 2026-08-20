@@ -325,7 +325,28 @@ def _build_professional_documents(
     rows_by_id = {row.id: row for row in request.matrix.rows}
     if any(requirement_id not in rows_by_id for requirement_id in requirement_ids):
         raise ValueError("cover letter target requirement is unknown")
-    target_requirements = tuple(rows_by_id[value] for value in requirement_ids)
+    requested_requirements = set(requirement_ids)
+    selected_skill_ids = {
+        evidence_id
+        for evidence_id in selected_ids
+        if EvidenceKind.SKILL in approved[evidence_id].kinds
+    }
+    target_requirements = tuple(
+        sorted(
+            (
+                row
+                for row in request.matrix.rows
+                if set(row.evidence_ids).intersection(selected_ids)
+            ),
+            key=lambda row: (
+                not bool(set(row.evidence_ids).intersection(selected_skill_ids)),
+                row.id not in requested_requirements,
+                -len(set(row.evidence_ids).intersection(selected_ids)),
+            ),
+        )[:3]
+    )
+    if not target_requirements:
+        raise ValueError("cover letter requires evidence-backed requirements")
     referenced_evidence = {
         evidence_id
         for requirement in target_requirements
