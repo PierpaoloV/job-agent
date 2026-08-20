@@ -16,6 +16,7 @@ from notify_telegram import (
     TelegramMessage,
     TelegramReceipt,
     TelegramSendUncertain,
+    delete_telegram_messages,
     send_protected_document_group,
     send_protected_message,
 )
@@ -62,6 +63,9 @@ class GatewayArtifactReviewPublisher:
         control_sender: Callable[[TelegramMessage], TelegramReceipt] = (
             send_protected_message
         ),
+        message_deleter: Callable[[Sequence[TelegramReceipt]], None] = (
+            delete_telegram_messages
+        ),
     ) -> None:
         self._endpoint = str(endpoint).rstrip("/")
         self._internal_token = str(internal_token).strip()
@@ -70,6 +74,7 @@ class GatewayArtifactReviewPublisher:
         self._session = session
         self._document_sender = document_sender
         self._control_sender = control_sender
+        self._message_deleter = message_deleter
         if not self._endpoint.startswith("https://") or not all(
             (self._internal_token, self._actor_id, self._chat_id)
         ):
@@ -117,11 +122,15 @@ class GatewayArtifactReviewPublisher:
         document_message_ids = tuple(
             item.message_id for item in document_receipts
         )
-        self._bind(
-            authorization.review_id,
-            document_message_ids,
-            None,
-        )
+        try:
+            self._bind(
+                authorization.review_id,
+                document_message_ids,
+                None,
+            )
+        except Exception as exc:
+            self._compensate(document_receipts, exc)
+        control_receipt = None
         try:
             control_receipt = self._control_sender(
                 TelegramMessage(
@@ -142,9 +151,10 @@ class GatewayArtifactReviewPublisher:
                 control_receipt.message_id,
             )
         except Exception as exc:
-            raise TelegramSendUncertain(
-                "Protected review publication is incomplete after document send"
-            ) from exc
+            receipts = document_receipts + (
+                () if control_receipt is None else (control_receipt,)
+            )
+            self._compensate(receipts, exc)
         return ArtifactReviewReceipt(
             review_id=authorization.review_id,
             document_message_ids=(
@@ -239,6 +249,21 @@ class GatewayArtifactReviewPublisher:
             "Content-Type": "application/json",
         }
 
+    def _compensate(
+        self,
+        receipts: Sequence[TelegramReceipt],
+        cause: Exception,
+    ) -> None:
+        try:
+            self._message_deleter(receipts)
+        except Exception as cleanup_error:
+            raise TelegramSendUncertain(
+                "Protected review bind failed and cleanup is uncertain"
+            ) from cleanup_error
+        raise TelegramSendUncertain(
+            "Protected review publication was rolled back after bind failure"
+        ) from cause
+
 
 def _validate_identity(
     application_id: str,
@@ -313,13 +338,16 @@ def recover_gateway_artifact_review_dispatch(
     application_id: str,
     official_vacancy_version: str,
     package_hash: str,
-    confirmed_absent: bool,
+    confirmed_absent: bool = False,
+    confirmed_failed: bool = False,
     session=requests,
 ) -> str:
     """Explicitly retry only after an operator proves no GitHub run exists."""
 
-    if not confirmed_absent:
-        raise ValueError("GitHub run absence must be explicitly confirmed")
+    if confirmed_absent == confirmed_failed:
+        raise ValueError(
+            "Exactly one GitHub recovery state must be explicitly confirmed"
+        )
     endpoint = str(endpoint).rstrip("/")
     internal_token = str(internal_token).strip()
     if (
@@ -339,7 +367,8 @@ def recover_gateway_artifact_review_dispatch(
             "Content-Type": "application/json",
         },
         json={
-            "confirmed_absent": True,
+            "confirmed_absent": confirmed_absent,
+            "confirmed_failed": confirmed_failed,
             "action": action,
             "application_id": application_id,
             "official_vacancy_version": official_vacancy_version,
@@ -363,6 +392,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--official-vacancy-version", required=True)
     parser.add_argument("--package-hash", required=True)
     parser.add_argument("--confirmed-absent", action="store_true")
+    parser.add_argument("--confirmed-failed", action="store_true")
     args = parser.parse_args(argv)
     kwargs = {
         "endpoint": os.environ["JOB_AGENT_CALLBACK_GATEWAY_URL"],
@@ -379,6 +409,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         recover_gateway_artifact_review_dispatch(
             **kwargs,
             confirmed_absent=args.confirmed_absent,
+            confirmed_failed=args.confirmed_failed,
         )
     return 0
 

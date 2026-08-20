@@ -115,6 +115,17 @@ class MemoryStore {
     review.acceptedAt = acceptedAt;
   }
 
+  async beginReviewDispatch(reviewId, attemptedAt) {
+    const review = [...this.reviews.values()].find(
+      (candidate) => candidate.reviewId === reviewId,
+    );
+    if (!review || !["deciding", "cleanup_retrying"].includes(review.status)) {
+      throw new Error("review dispatch boundary was not persisted");
+    }
+    review.status = "dispatch_uncertain";
+    review.attemptedAt = attemptedAt;
+  }
+
   async acknowledgeReviewDecision(reviewId, identity, acknowledgedAt) {
     const review = [...this.reviews.values()].find(
       (candidate) => candidate.reviewId === reviewId,
@@ -149,7 +160,12 @@ class MemoryStore {
     );
     if (
       !review ||
-      review.status !== "dispatch_uncertain" ||
+      ![
+        identity.confirmation === "run_absent"
+          ? "dispatch_uncertain"
+          : "dispatch_accepted",
+        "dispatch_recovering",
+      ].includes(review.status) ||
       review.applicationId !== identity.applicationId ||
       review.vacancyVersion !== identity.vacancyVersion ||
       review.packageHash !== identity.packageHash ||
@@ -649,6 +665,19 @@ test("artifact approval deletes protected review then dispatches exact package o
     store.reviews.get("review:approved-25764671169e97eb:package-a").status,
     "dispatch_accepted",
   );
+  const failedRunRecovery = await gateway.fetch(
+    reviewDispatchRecoveryRequest(issued.review_id, {
+      confirmedFailed: true,
+    }),
+    env,
+  );
+  assert.deepEqual(await failedRunRecovery.json(), {
+    status: "dispatch_accepted",
+  });
+  assert.equal(
+    calls.filter(({ url }) => url.includes("api.github.com")).length,
+    2,
+  );
   const ack = await gateway.fetch(
     reviewDecisionAckRequest(issued.review_id, "approve_artifacts"),
     env,
@@ -828,14 +857,16 @@ test("uncertain review dispatch requires confirmed-absent operator recovery", as
   );
 
   const refused = await gateway.fetch(
-    reviewDispatchRecoveryRequest(issued.review_id, false),
+    reviewDispatchRecoveryRequest(issued.review_id, {}),
     env,
   );
   assert.equal(refused.status, 400);
   assert.equal(githubCalls, 1);
 
   const recovered = await gateway.fetch(
-    reviewDispatchRecoveryRequest(issued.review_id, true),
+    reviewDispatchRecoveryRequest(issued.review_id, {
+      confirmedAbsent: true,
+    }),
     env,
   );
   assert.deepEqual(await recovered.json(), { status: "dispatch_accepted" });
@@ -1583,7 +1614,10 @@ function reviewDecisionAckRequest(reviewId, action) {
 }
 
 
-function reviewDispatchRecoveryRequest(reviewId, confirmedAbsent) {
+function reviewDispatchRecoveryRequest(
+  reviewId,
+  { confirmedAbsent = false, confirmedFailed = false },
+) {
   return new Request(
     `https://gateway.test/v1/artifact-reviews/${reviewId}/dispatch-recovery`,
     {
@@ -1594,6 +1628,7 @@ function reviewDispatchRecoveryRequest(reviewId, confirmedAbsent) {
       },
       body: JSON.stringify({
         confirmed_absent: confirmedAbsent,
+        confirmed_failed: confirmedFailed,
         action: "approve_artifacts",
         application_id: "approved-25764671169e97eb",
         official_vacancy_version: `sha256:${"a".repeat(64)}`,

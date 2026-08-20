@@ -141,3 +141,32 @@ def test_protected_pdf_review_sends_both_documents_as_one_protected_group(
     assert request["files"]["document_0"][0] == "CV.pdf"
     assert request["files"]["document_1"][0] == "Lettera.pdf"
     assert request["timeout"] == 30
+
+
+def test_compensating_delete_is_idempotent_for_acknowledged_messages(monkeypatch):
+    calls = []
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "test-token")
+
+    def post(url, **kwargs):
+        calls.append((url, kwargs))
+        if kwargs["json"]["message_id"] == 701:
+            return FakeTelegramResponse(
+                {
+                    "ok": False,
+                    "error_code": 400,
+                    "description": "Bad Request: message to delete not found",
+                },
+                status_code=400,
+            )
+        return FakeTelegramResponse({"ok": True, "result": True})
+
+    monkeypatch.setattr(notify_telegram.requests, "post", post)
+
+    notify_telegram.delete_telegram_messages(
+        (
+            notify_telegram.TelegramReceipt(message_id=701, chat_id="42"),
+            notify_telegram.TelegramReceipt(message_id=702, chat_id="42"),
+        )
+    )
+
+    assert [call[1]["json"]["message_id"] for call in calls] == [701, 702]

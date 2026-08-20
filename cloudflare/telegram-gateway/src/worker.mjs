@@ -261,11 +261,24 @@ export class D1GatewayStore {
       .prepare(
         "UPDATE artifact_reviews SET status = 'dispatch_accepted', " +
           "status_evidence = ?1 WHERE review_id = ?2 " +
-          "AND status IN ('deciding', 'cleanup_retrying', " +
-          "'dispatch_recovering')",
+          "AND status IN ('dispatch_uncertain', 'dispatch_recovering')",
       )
       .bind(`github_dispatch_accepted:${acceptedAt}`, reviewId)
       .run();
+  }
+
+  async beginReviewDispatch(reviewId, attemptedAt) {
+    const result = await this.database
+      .prepare(
+        "UPDATE artifact_reviews SET status = 'dispatch_uncertain', " +
+          "status_evidence = ?1 WHERE review_id = ?2 " +
+          "AND status IN ('deciding', 'cleanup_retrying')",
+      )
+      .bind(`github_dispatch_attempt_started:${attemptedAt}`, reviewId)
+      .run();
+    if (result.meta.changes !== 1) {
+      throw new Error("review dispatch boundary was not persisted");
+    }
   }
 
   async acknowledgeReviewDecision(reviewId, identity, acknowledgedAt) {
@@ -312,12 +325,16 @@ export class D1GatewayStore {
   }
 
   async claimReviewDispatchRecovery(reviewId, identity) {
+    const recoverableStatus =
+      identity.confirmation === "run_absent"
+        ? "dispatch_uncertain"
+        : "dispatch_accepted";
     const result = await this.database
       .prepare(
         "UPDATE artifact_reviews SET status = 'dispatch_recovering' " +
           "WHERE review_id = ?1 AND application_id = ?2 " +
           "AND vacancy_version = ?3 AND package_hash = ?4 " +
-          "AND decision = ?5 AND status = 'dispatch_uncertain'",
+          "AND decision = ?5 AND status IN (?6, 'dispatch_recovering')",
       )
       .bind(
         reviewId,
@@ -325,6 +342,7 @@ export class D1GatewayStore {
         identity.vacancyVersion,
         identity.packageHash,
         identity.action,
+        recoverableStatus,
       )
       .run();
     if (result.meta.changes !== 1) {
@@ -352,8 +370,7 @@ export class D1GatewayStore {
       .prepare(
         "UPDATE artifact_reviews SET status = 'cleanup_uncertain', " +
           "status_evidence = ?1 WHERE review_id = ?2 " +
-          "AND status IN ('deciding', 'cleanup_retrying', " +
-          "'dispatch_recovering')",
+          "AND status IN ('dispatch_uncertain', 'dispatch_recovering')",
       )
       .bind(evidence, reviewId)
       .run();
@@ -840,6 +857,7 @@ async function cleanupExpiredArtifactReviews(
       );
       continue;
     }
+    await store.beginReviewDispatch(review.reviewId, observedAt);
     let response;
     try {
       response = await dispatchToGitHub(fetchImpl, env, {
@@ -1079,10 +1097,19 @@ async function recoverReviewDispatch(
   } catch {
     return json({ error: "invalid_json" }, 400);
   }
-  if (value?.confirmed_absent !== true) {
-    return json({ error: "github_run_absence_not_confirmed" }, 400);
+  const confirmation =
+    value?.confirmed_absent === true && value?.confirmed_failed !== true
+      ? "run_absent"
+      : value?.confirmed_failed === true && value?.confirmed_absent !== true
+        ? "run_failed"
+        : "";
+  if (!confirmation) {
+    return json({ error: "github_recovery_state_not_confirmed" }, 400);
   }
-  const identity = parseReviewDecisionIdentity(value);
+  const parsedIdentity = parseReviewDecisionIdentity(value);
+  const identity = parsedIdentity
+    ? { ...parsedIdentity, confirmation }
+    : null;
   if (!identity) {
     return json({ error: "invalid_review_decision_identity" }, 400);
   }
@@ -1362,6 +1389,7 @@ async function acceptArtifactReviewCallback(
     );
     return json({ accepted: true });
   }
+  await store.beginReviewDispatch(review.reviewId, receivedAt);
   await store.markUpdate(callback.updateId, "dispatching");
   let response;
   try {

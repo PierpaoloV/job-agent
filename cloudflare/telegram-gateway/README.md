@@ -30,7 +30,9 @@ dispatch.
 An uncertain GitHub transport outcome is retained for manual reconciliation;
 it is never retried automatically. After confirming that no corresponding
 GitHub run exists, use `python -m hosted_artifact_review recover-dispatch` with
-the exact review identity and `--confirmed-absent`. A 204 repository dispatch
+the exact review identity and `--confirmed-absent`. If a previously accepted
+run ended without publishing authoritative state, use `--confirmed-failed`
+only after verifying that terminal failure. A 204 repository dispatch
 only moves the review to `dispatch_accepted`; `approved` or
 `regenerate_requested` is recorded only after Actions publishes its state and
 calls `decision-ack`.

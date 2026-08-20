@@ -233,6 +233,60 @@ def _receipt(value: Any, expected_chat_id: str) -> TelegramReceipt:
     return TelegramReceipt(message_id=message_id, chat_id=acknowledged_chat_id)
 
 
+def delete_telegram_messages(receipts: Sequence[TelegramReceipt]) -> None:
+    """Idempotently compensate acknowledged sends that could not be bound."""
+
+    items = tuple(receipts)
+    if not items or len({item.message_id for item in items}) != len(items):
+        raise ValueError("Telegram compensating delete receipts are invalid")
+    chat_ids = {item.chat_id for item in items}
+    if len(chat_ids) != 1:
+        raise ValueError("Telegram compensating delete crossed chat scope")
+    token = os.environ["TELEGRAM_BOT_TOKEN"]
+    for receipt in items:
+        for attempt in range(2):
+            try:
+                response = requests.post(
+                    f"https://api.telegram.org/bot{token}/deleteMessage",
+                    json={
+                        "chat_id": receipt.chat_id,
+                        "message_id": receipt.message_id,
+                    },
+                    timeout=15,
+                )
+            except requests.RequestException as exc:
+                if attempt == 0:
+                    continue
+                raise TelegramSendUncertain(
+                    "Telegram compensating delete outcome is uncertain "
+                    f"(transport={type(exc).__name__})"
+                ) from None
+            try:
+                body: Any = response.json()
+            except Exception:
+                raise TelegramSendUncertain(
+                    "Telegram returned an invalid delete acknowledgement"
+                ) from None
+            already_deleted = (
+                response.status_code == 400
+                and isinstance(body, Mapping)
+                and body.get("error_code") == 400
+                and "message to delete not found"
+                in str(body.get("description", "")).casefold()
+            )
+            if already_deleted or (
+                response.ok
+                and isinstance(body, Mapping)
+                and body.get("ok") is True
+                and body.get("result") is True
+            ):
+                break
+            raise TelegramSendRejected(
+                "Telegram compensating delete was rejected "
+                f"(HTTP {response.status_code})"
+            )
+
+
 def send_digest(
     jobs: list[dict],
     *,
