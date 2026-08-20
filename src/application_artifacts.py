@@ -78,7 +78,8 @@ class GeneratedArtifactBundle:
     cv_text: str
     cover_letter_text: str
     claims: tuple[MaterialClaim, ...]
-    trusted_source_text: str = ""
+    additional_evidence: tuple[EvidenceRecord, ...] = ()
+    allowed_untraced_lines: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -221,7 +222,8 @@ class TruthfulApplicationArtifactService:
             canonical_cv_text=snapshot.canonical_cv_text,
         )
         generated = self._generator.generate(request)
-        audit = self._claim_auditor.audit(generated, evidence)
+        audit_evidence = (*evidence, *generated.additional_evidence)
+        audit = self._claim_auditor.audit(generated, audit_evidence)
         if not audit.complete:
             raise ValueError("full-document material claim audit is incomplete")
         if audit.unsupported_claims:
@@ -229,7 +231,7 @@ class TruthfulApplicationArtifactService:
                 "unsupported material claims: "
                 + "; ".join(audit.unsupported_claims)
             )
-        traces = self._validate_claims(generated, evidence, audit.claims)
+        traces = self._validate_claims(generated, audit_evidence, audit.claims)
         generation_version = self._generation_version(
             generated=generated,
             traces=traces,

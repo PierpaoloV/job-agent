@@ -116,3 +116,28 @@ def test_rejects_non_boolean_approval_and_excludes_unapproved_evidence(tmp_path)
 
     with pytest.raises(ValueError, match="approved must be a YAML boolean"):
         YamlEvidenceSource(evidence_path, canonical_cv).load()
+
+
+def test_canonical_cv_projection_excludes_sensitive_profile_lines(tmp_path):
+    canonical_cv = tmp_path / "curriculum_vitae.pdf"
+    canvas = Canvas(str(canonical_cv))
+    for y, line in (
+        (800, "Synthetic Candidate"),
+        (780, "synthetic@example.com"),
+        (760, "Italian citizen based in the Netherlands"),
+        (740, "Date of birth: 1990-01-01"),
+        (720, "Professional Experience"),
+        (700, "Machine Learning Researcher"),
+    ):
+        canvas.drawString(50, y, line)
+    canvas.save()
+    evidence_path = tmp_path / "evidence.yaml"
+    evidence_path.write_text("highlights: []\nskill_evidence: []\n", encoding="utf-8")
+
+    projected = YamlEvidenceSource(evidence_path, canonical_cv).load().canonical_cv_text
+
+    assert "Synthetic Candidate" in projected
+    assert "synthetic@example.com" in projected
+    assert "Machine Learning Researcher" in projected
+    assert "citizen" not in projected.casefold()
+    assert "date of birth" not in projected.casefold()

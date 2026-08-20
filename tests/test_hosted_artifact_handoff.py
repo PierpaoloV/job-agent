@@ -443,7 +443,24 @@ def test_hosted_preparation_uses_authoritative_input_and_exports_one_package(
     )
     canonical_cv = tmp_path / "curriculum_vitae.pdf"
     canvas = Canvas(str(canonical_cv))
-    canvas.drawString(50, 800, "Synthetic Candidate canonical CV")
+    y = 800
+    for line in (
+        "Synthetic Candidate",
+        "Applied AI Researcher",
+        "synthetic@example.com",
+        "Applied AI researcher building reproducible systems.",
+        "I validate machine-learning systems against real requirements.",
+        "Machine Learning Researcher",
+        "Example Institute",
+        "Amsterdam",
+        "2022 - Present",
+        "Built reproducible research systems.",
+        "PhD in Artificial Intelligence",
+        "Example University",
+        "2018 - 2022",
+    ):
+        canvas.drawString(50, y, line)
+        y -= 18
     canvas.save()
     vacancy_version = identity().official_vacancy_version
     store = HostedPreparationInputStore(tmp_path / "authoritative-inputs")
@@ -475,21 +492,35 @@ def test_hosted_preparation_uses_authoritative_input_and_exports_one_package(
             },
         )
     )
-    statement = "Uses Python for reproducible ML research."
     provider = RecordingProvider(
         {
-            "cv_text": f"Synthetic Candidate\nSKILLS\n{statement}",
-            "cover_letter_text": (
-                f"Dear Hiring Team,\n\n{statement}\n\n"
-                "Sincerely,\nSynthetic Candidate"
-            ),
-            "claims": [
+            "headline": "Applied AI Researcher",
+            "contacts": ["synthetic@example.com"],
+            "summary": ["Applied AI researcher building reproducible systems."],
+            "experience": [
                 {
-                    "statement": statement,
-                    "kind": "skill",
-                    "evidence_ids": ["skill-python"],
-                    "appears_in": ["cv", "cover_letter"],
+                    "role": "Machine Learning Researcher",
+                    "organization": "Example Institute",
+                    "location": "Amsterdam",
+                    "dates": "2022 - Present",
+                    "bullets": ["Built reproducible research systems."],
                 }
+            ],
+            "education": [
+                {
+                    "degree": "PhD in Artificial Intelligence",
+                    "institution": "Example University",
+                    "location": "Amsterdam",
+                    "dates": "2018 - 2022",
+                }
+            ],
+            "selected_publications": [],
+            "selected_evidence_ids": ["skill-python"],
+            "target_requirement_ids": ["req-python"],
+            "target_role": "computer-vision research systems",
+            "cover_letter_source_paragraphs": [
+                "Applied AI researcher building reproducible systems.",
+                "I validate machine-learning systems against real requirements.",
             ],
         }
     )

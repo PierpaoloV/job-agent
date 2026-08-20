@@ -100,7 +100,10 @@ GitHub requires Contents write for repository dispatch.
 The hosted job retrieves the canonical CV from the public `example-org/cv`
 release. Its extractable professional text is the authoritative source for
 contact details, role metadata, education, and other CV structure selected by
-Sonnet; the private evidence YAML remains the authority for tailored claims.
+Sonnet; personal health, demographic, identity-document, secret-credential,
+and ATS-answer lines are removed before that boundary. Every selected material
+line receives a canonical-CV evidence ID, while the private evidence YAML
+remains the authority for tailored requirement claims.
 Publishing a new master CV and updating `JOB_AGENT_EVIDENCE_YAML` must be
 treated as one source-version update before preparing another role.
 

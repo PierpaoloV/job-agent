@@ -3,6 +3,7 @@ import sys
 from dataclasses import replace
 
 from pypdf import PdfReader
+import pytest
 from reportlab.pdfgen.canvas import Canvas
 import yaml
 
@@ -105,38 +106,72 @@ def tailoring_request():
         canonical_cv_version="sha256:master-cv",
         evidence=(evidence,),
         stretch_decision=StretchDecision(False),
+        canonical_cv_text=professional_source(),
     )
+
+
+def professional_source():
+    return "\n".join(
+        (
+            "Synthetic Candidate",
+            "Applied AI Researcher",
+            "synthetic@example.com",
+            "Applied AI researcher building reproducible systems.",
+            "I validate machine-learning systems against real requirements.",
+            "Machine Learning Researcher",
+            "Example Institute",
+            "Amsterdam",
+            "2022 - Present",
+            "Built reproducible research systems.",
+            "PhD in Artificial Intelligence",
+            "Example University",
+            "2018 - 2022",
+        )
+    )
+
+
+def professional_selection(**updates):
+    payload = {
+        "headline": "Applied AI Researcher",
+        "contacts": ["synthetic@example.com"],
+        "summary": ["Applied AI researcher building reproducible systems."],
+        "experience": [
+            {
+                "role": "Machine Learning Researcher",
+                "organization": "Example Institute",
+                "location": "Amsterdam",
+                "dates": "2022 - Present",
+                "bullets": ["Built reproducible research systems."],
+            }
+        ],
+        "education": [
+            {
+                "degree": "PhD in Artificial Intelligence",
+                "institution": "Example University",
+                "location": "Amsterdam",
+                "dates": "2018 - 2022",
+            }
+        ],
+        "selected_publications": [],
+        "selected_evidence_ids": ["python-research"],
+        "target_requirement_ids": ["req-python"],
+        "target_role": "computer-vision research systems",
+        "cover_letter_source_paragraphs": [
+            "Applied AI researcher building reproducible systems.",
+            "I validate machine-learning systems against real requirements.",
+        ],
+    }
+    payload.update(updates)
+    return payload
 
 
 def test_generates_both_documents_and_exact_claim_traces_in_one_provider_call():
-    provider = RecordingProvider(
-        {
-            "cv_text": "Builds reproducible ML research pipelines with Python.",
-            "cover_letter_text": (
-                "I build reproducible ML research pipelines with Python."
-            ),
-            "claims": [
-                {
-                    "statement": (
-                        "Builds reproducible ML research pipelines with Python."
-                    ),
-                    "kind": "skill",
-                    "evidence_ids": ["python-research"],
-                    "appears_in": ["cv"],
-                },
-                {
-                    "statement": (
-                        "I build reproducible ML research pipelines with Python."
-                    ),
-                    "kind": "skill",
-                    "evidence_ids": ["python-research"],
-                    "appears_in": ["cover_letter"],
-                },
-            ],
-        }
-    )
+    provider = RecordingProvider(professional_selection())
 
-    generated = StructuredArtifactGenerator(provider).generate(tailoring_request())
+    generated = StructuredArtifactGenerator(
+        provider,
+        candidate_name="Synthetic Candidate",
+    ).generate(tailoring_request())
 
     assert len(provider.requests) == 1
     request = provider.requests[0]
@@ -146,6 +181,7 @@ def test_generates_both_documents_and_exact_claim_traces_in_one_provider_call():
     assert request["requirements_evidence_matrix"]["rows"][0]["evidence_ids"] == [
         "python-research"
     ]
+    assert request["canonical_cv_text"] == professional_source()
     allowed = set(request["contract"]["allowed_untraced_lines"])
     assert {
         "PROFESSIONAL SUMMARY",
@@ -166,17 +202,17 @@ def test_generates_both_documents_and_exact_claim_traces_in_one_provider_call():
             "source_reference": "master-cv:skills",
         }
     ]
-    assert generated.cv_text.startswith("CURRICULUM VITAE")
+    assert generated.cv_text.startswith("# Synthetic Candidate")
     assert (
         "Uses Python to build reproducible ML research pipelines."
-        in generated.cover_letter_text
+        in generated.cv_text
     )
-    assert len(generated.claims) == 1
-    assert generated.claims[0].kind == EvidenceKind.SKILL
-    assert generated.claims[0].appears_in == (
-        ArtifactDocument.CV,
-        ArtifactDocument.COVER_LETTER,
+    skill_claim = next(
+        claim for claim in generated.claims if claim.evidence_ids == ("python-research",)
     )
+    assert skill_claim.kind == EvidenceKind.SKILL
+    assert skill_claim.appears_in == (ArtifactDocument.CV,)
+    assert generated.additional_evidence
 
 
 def test_uses_one_sonnet_structured_output_request_for_the_whole_bundle():
@@ -203,9 +239,11 @@ def test_uses_one_sonnet_structured_output_request_for_the_whole_bundle():
         ],
         "selected_publications": [],
         "selected_evidence_ids": ["python-research"],
+        "target_requirement_ids": ["req-python"],
         "target_role": "computer-vision research systems",
         "cover_letter_source_paragraphs": [
-            "Applied AI researcher building machine-learning systems."
+            "Applied AI researcher building machine-learning systems.",
+            "I validate machine-learning systems against real requirements.",
         ],
     }
     post = RecordingPost(
@@ -225,6 +263,7 @@ def test_uses_one_sonnet_structured_output_request_for_the_whole_bundle():
             "Applied AI Researcher",
             "synthetic@example.com",
             "Applied AI researcher building machine-\nlearning systems.",
+            "I validate machine-learning systems against real requirements.",
             "Machine Learning Researcher",
             "Example Institute",
             "Amsterdam",
@@ -242,6 +281,8 @@ def test_uses_one_sonnet_structured_output_request_for_the_whole_bundle():
     assert generated.cv_text.startswith("# Synthetic Candidate")
     assert "Uses Python to build reproducible" in generated.cv_text
     assert "computer-vision research systems" in generated.cover_letter_text
+    assert "Python" in generated.cover_letter_text
+    assert "Please accept my application" not in generated.cover_letter_text
     assert len(post.calls) == 1
     url, kwargs = post.calls[0]
     assert url == "https://api.anthropic.com/v1/messages"
@@ -259,11 +300,49 @@ def test_uses_one_sonnet_structured_output_request_for_the_whole_bundle():
         "education",
         "selected_publications",
         "selected_evidence_ids",
+        "target_requirement_ids",
         "target_role",
         "cover_letter_source_paragraphs",
     ]
     assert kwargs["headers"]["x-api-key"] == "test-secret"
     assert kwargs["timeout"] == 120
+
+
+def test_structured_generation_rejects_identity_not_present_in_master_cv():
+    provider = RecordingProvider(professional_selection())
+
+    with pytest.raises(ValueError, match="candidate identity"):
+        StructuredArtifactGenerator(
+            provider,
+            candidate_name="Different Candidate",
+        ).generate(
+            replace(tailoring_request(), canonical_cv_text=professional_source())
+        )
+
+
+def test_structured_generation_requires_approved_technical_skill_evidence():
+    impact = EvidenceRecord(
+        evidence_id="research-impact",
+        families=(ArtifactFamily.RESEARCH,),
+        kinds=(EvidenceKind.IMPACT,),
+        approved_statement="Improved research evaluation quality.",
+        source_reference="master-cv:impact",
+    )
+    provider = RecordingProvider(
+        professional_selection(selected_evidence_ids=["research-impact"])
+    )
+
+    with pytest.raises(ValueError, match="technical skill"):
+        StructuredArtifactGenerator(
+            provider,
+            candidate_name="Synthetic Candidate",
+        ).generate(
+            replace(
+                tailoring_request(),
+                canonical_cv_text=professional_source(),
+                evidence=(impact,),
+            )
+        )
 
 
 def test_deterministic_audit_rejects_untraced_professional_text():
@@ -318,48 +397,25 @@ def test_deterministic_audit_rejects_fabrication_citing_a_same_kind_record():
     assert audit.unsupported_claims == (fabricated,)
 
 
-def test_generator_rebuilds_documents_from_exact_evidence_when_model_adds_prose():
-    approved = "Uses Python to build reproducible ML research pipelines."
+def test_generator_rejects_model_text_that_is_not_in_master_cv():
     provider = RecordingProvider(
-        {
-            "cv_text": (
-                "AI researcher with extensive production experience.\n"
-                + approved
-            ),
-            "cover_letter_text": (
-                "I am the ideal candidate for this role.\n" + approved
-            ),
-            "claims": [
-                {
-                    "statement": approved,
-                    "kind": "skill",
-                    "evidence_ids": ["python-research"],
-                    "appears_in": ["cv", "cover_letter"],
-                }
-            ],
-        }
+        professional_selection(headline="Invented production AI executive")
     )
 
-    generated = StructuredArtifactGenerator(
-        provider,
-        candidate_name="Synthetic Candidate",
-    ).generate(tailoring_request())
-
-    assert len(provider.requests) == 1
-    assert "extensive production experience" not in generated.cv_text
-    assert "ideal candidate" not in generated.cover_letter_text
-    assert approved in generated.cv_text
-    assert approved in generated.cover_letter_text
-    audit = DeterministicClaimAuditor(
-        structural_lines=("Synthetic Candidate",)
-    ).audit(generated, tailoring_request().evidence)
-    assert audit.unsupported_claims == ()
+    with pytest.raises(ValueError, match="headline must copy canonical CV text"):
+        StructuredArtifactGenerator(
+            provider,
+            candidate_name="Synthetic Candidate",
+        ).generate(tailoring_request())
 
 
 def test_production_composition_builds_one_private_versioned_pdf_bundle(tmp_path):
     canonical_cv = tmp_path / "curriculum_vitae.pdf"
     canvas = Canvas(str(canonical_cv))
-    canvas.drawString(50, 800, "Synthetic Candidate canonical CV")
+    y = 800
+    for line in professional_source().splitlines():
+        canvas.drawString(50, y, line)
+        y -= 18
     canvas.save()
     evidence_path = tmp_path / "evidence.yaml"
     evidence_path.write_text(
@@ -381,27 +437,7 @@ def test_production_composition_builds_one_private_versioned_pdf_bundle(tmp_path
         ),
         encoding="utf-8",
     )
-    statement = "Uses Python to build reproducible ML research pipelines."
-    provider = RecordingProvider(
-        {
-            "cv_text": (
-                "Synthetic Candidate\nPROFESSIONAL SUMMARY\n" + statement
-            ),
-            "cover_letter_text": (
-                "Dear Hiring Team,\n\n"
-                + statement
-                + "\n\nSincerely,\nSynthetic Candidate"
-            ),
-            "claims": [
-                {
-                    "statement": statement,
-                    "kind": "skill",
-                    "evidence_ids": ["python-research"],
-                    "appears_in": ["cv", "cover_letter"],
-                }
-            ],
-        }
-    )
+    provider = RecordingProvider(professional_selection())
     service = build_application_artifact_service(
         repository_root=tmp_path / "job-agent",
         evidence_path=evidence_path,
@@ -430,7 +466,10 @@ def test_production_composition_builds_one_private_versioned_pdf_bundle(tmp_path
     assert cv.parent.parent.parent == (
         tmp_path / "job-agent" / "data" / "private" / "application-artifacts"
     )
-    assert artifacts.claims[0].evidence_ids == ("python-research",)
+    assert any(
+        claim.evidence_ids == ("python-research",)
+        for claim in artifacts.claims
+    )
 
 
 def test_production_bundle_preserves_complete_master_cv_identity_and_structure(
@@ -444,6 +483,7 @@ def test_production_bundle_preserves_complete_master_cv_identity_and_structure(
         "synthetic@example.com | example.com/synthetic",
         "Professional Profile",
         "Applied AI researcher building reproducible machine-learning systems.",
+        "I validate machine-learning systems against real requirements.",
         "Professional Experience",
         "Machine Learning Researcher",
         "Example Research Institute",
@@ -511,9 +551,11 @@ def test_production_bundle_preserves_complete_master_cv_identity_and_structure(
             ],
             "selected_publications": [],
             "selected_evidence_ids": ["python-research"],
-            "target_role": "",
+            "target_requirement_ids": ["req-python"],
+            "target_role": "computer-vision research systems",
             "cover_letter_source_paragraphs": [
-                "Applied AI researcher building reproducible machine-learning systems."
+                "Applied AI researcher building reproducible machine-learning systems.",
+                "I validate machine-learning systems against real requirements.",
             ],
         }
     )
@@ -553,3 +595,6 @@ def test_production_bundle_preserves_complete_master_cv_identity_and_structure(
     assert "TECHNICAL SKILLS" in cv_text
     assert "Applied AI researcher building reproducible" in letter_text
     assert len(PdfReader(artifacts.cv_path).pages) <= 2
+    traced = {claim.statement for claim in artifacts.claims}
+    assert "Machine Learning Researcher" in traced
+    assert "PhD in Artificial Intelligence" in traced

@@ -19,6 +19,14 @@ one to three relevant roles, education, and optional publications. The runtime
 validates every selected excerpt against the master source, requires an email,
 experience, education, summary, and approved tailored evidence, then renders a
 styled ATS-readable document capped at two pages.
+Before the model call, the canonical projection removes health, demographic,
+identity-document, secret-credential, ATS-answer, and personal-interest lines.
+Every selected material excerpt becomes an exact, deterministic canonical-CV
+evidence record and claim trace; source membership never bypasses the audit.
+The letter must name a role copied from the official vacancy, cite one to three
+persisted requirement IDs, and select at least two matching first-person master
+CV paragraphs. At least one selected approved evidence record must be a
+technical skill.
 
 ## Safety invariants
 

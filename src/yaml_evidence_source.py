@@ -1,14 +1,15 @@
-"""Read the candidate-owned, professional-only YAML evidence bank.
+"""Read candidate-owned professional evidence and a safe canonical-CV view.
 
-The source deliberately projects only explicitly approved professional claim
-records. It never loads profile, health, demographic, contact, or other
-non-evidence fields into the tailoring boundary.
+The source projects explicitly approved claim records and extractable
+professional CV text. It removes personal health, demographic,
+identity-document, credential, and ATS-answer lines before the model boundary.
 """
 
 from __future__ import annotations
 
 import hashlib
 from pathlib import Path
+import re
 from typing import Any, Iterable, Mapping
 
 import yaml
@@ -25,6 +26,36 @@ _FAMILY_ALIASES = {
     "agentic_ai": ArtifactFamily.AGENTIC_AI,
 }
 _RECORD_SECTIONS = ("highlights", "skill_evidence")
+_BLOCKED_SECTION_HEADINGS = {
+    "demographics",
+    "health",
+    "interests",
+    "languages and interests",
+    "personal details",
+    "personal information",
+}
+_SAFE_SECTION_HEADINGS = {
+    "certifications and additional learning",
+    "complete skills inventory",
+    "education",
+    "honors, fellowships, and grants",
+    "open-source and personal engineering projects",
+    "peer-reviewed publications and proceedings",
+    "professional experience",
+    "professional profile",
+    "research programs and technical contributions",
+    "scientific service and university governance",
+    "teaching, supervision, and mentoring",
+}
+_SENSITIVE_LINE = re.compile(
+    r"\b(?:"
+    r"api key|access token|ats answer|citizen|citizenship|date of birth|"
+    r"demographic|diagnos\w*|disabil\w*|ethnic\w*|gender|health condition|"
+    r"identity document|marital|nationality|passport|password|race|religio\w*|"
+    r"social security|tax id"
+    r")\b",
+    re.IGNORECASE,
+)
 
 
 class YamlEvidenceSource:
@@ -42,10 +73,11 @@ class YamlEvidenceSource:
             raise ValueError("evidence bank must contain a YAML mapping")
 
         records = tuple(self._records(payload))
-        canonical_cv_text = "\n".join(
+        extracted_cv_text = "\n".join(
             (page.extract_text() or "").strip()
             for page in PdfReader(self._canonical_cv_path).pages
         ).strip()
+        canonical_cv_text = _professional_cv_projection(extracted_cv_text)
         if not canonical_cv_text:
             raise ValueError("canonical CV must contain extractable text")
         return EvidenceBankSnapshot(
@@ -103,6 +135,27 @@ def _is_approved(row: Mapping[str, Any]) -> bool:
 
 def _sha256(value: bytes) -> str:
     return f"sha256:{hashlib.sha256(value).hexdigest()}"
+
+
+def _professional_cv_projection(value: str) -> str:
+    projected: list[str] = []
+    blocked_section = False
+    for raw_line in str(value).splitlines():
+        line = raw_line.strip()
+        if not line:
+            if projected and projected[-1]:
+                projected.append("")
+            continue
+        heading = " ".join(line.casefold().split())
+        if heading in _BLOCKED_SECTION_HEADINGS:
+            blocked_section = True
+            continue
+        if heading in _SAFE_SECTION_HEADINGS:
+            blocked_section = False
+        if blocked_section or _SENSITIVE_LINE.search(line):
+            continue
+        projected.append(line)
+    return "\n".join(projected).strip()
 
 
 __all__ = ["YamlEvidenceSource"]
