@@ -762,7 +762,7 @@ _STANDARD_STRUCTURAL_LINES = (
 _EXPERIENCE_SCHEMA = {
     "type": "object",
     "properties": {
-        "source_block": {"type": "string", "minLength": 1},
+        "source_block": {"type": "string"},
         "role": {"type": "string"},
         "organization": {"type": "string"},
         "location": {"type": "string"},
@@ -770,8 +770,6 @@ _EXPERIENCE_SCHEMA = {
         "bullets": {
             "type": "array",
             "items": {"type": "string"},
-            "minItems": 1,
-            "maxItems": 4,
         },
     },
     "required": [
@@ -788,7 +786,7 @@ _EXPERIENCE_SCHEMA = {
 _EDUCATION_SCHEMA = {
     "type": "object",
     "properties": {
-        "source_block": {"type": "string", "minLength": 1},
+        "source_block": {"type": "string"},
         "degree": {"type": "string"},
         "institution": {"type": "string"},
         "location": {"type": "string"},
@@ -805,50 +803,35 @@ _ARTIFACT_SCHEMA = {
         "contacts": {
             "type": "array",
             "items": {"type": "string"},
-            "minItems": 1,
-            "maxItems": 5,
         },
         "summary": {
             "type": "array",
             "items": {"type": "string"},
-            "minItems": 1,
-            "maxItems": 3,
         },
         "experience": {
             "type": "array",
             "items": _EXPERIENCE_SCHEMA,
-            "minItems": 1,
-            "maxItems": 3,
         },
         "education": {
             "type": "array",
             "items": _EDUCATION_SCHEMA,
-            "minItems": 1,
-            "maxItems": 3,
         },
         "selected_publications": {
             "type": "array",
             "items": {"type": "string"},
-            "minItems": 1,
-            "maxItems": 3,
         },
         "selected_evidence_ids": {
             "type": "array",
             "items": {"type": "string"},
-            "minItems": 1,
         },
         "target_requirement_ids": {
             "type": "array",
             "items": {"type": "string"},
-            "minItems": 1,
-            "maxItems": 3,
         },
-        "target_role": {"type": "string", "minLength": 1},
+        "target_role": {"type": "string"},
         "cover_letter_source_paragraphs": {
             "type": "array",
             "items": {"type": "string"},
-            "minItems": 1,
-            "maxItems": 2,
         },
     },
     "required": [

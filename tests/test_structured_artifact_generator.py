@@ -385,6 +385,20 @@ def test_uses_one_sonnet_structured_output_request_for_the_whole_bundle():
     assert url == "https://api.anthropic.com/v1/messages"
     assert kwargs["json"]["model"] == "claude-sonnet-4-6"
     assert kwargs["json"]["output_config"]["format"]["type"] == "json_schema"
+    encoded_schema = __import__("json").dumps(
+        kwargs["json"]["output_config"]["format"]["schema"]
+    )
+    assert all(
+        unsupported not in encoded_schema
+        for unsupported in (
+            '"minItems"',
+            '"maxItems"',
+            '"minLength"',
+            '"maxLength"',
+            '"minimum"',
+            '"maximum"',
+        )
+    )
     sent_request = __import__("json").loads(
         kwargs["json"]["messages"][0]["content"]
     )
