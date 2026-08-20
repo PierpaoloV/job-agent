@@ -670,22 +670,10 @@ def _validated_entry_bullets(
         source_bullets.append(" ".join(current).strip())
     if lines and (not source_bullets or any(not bullet for bullet in source_bullets)):
         raise ValueError("experience source_block requires complete bullets")
-    selected = tuple(str(item).strip() for item in raw[:4])
-    local = {_bullet_comparison_key(item): item for item in source_bullets}
-    authoritative = {
-        _bullet_comparison_key(item): item
-        for item in _canonical_entry_bullets(source, entry_fields)
-    }
+    authoritative = _canonical_entry_bullets(source, entry_fields)
     if not authoritative:
         raise ValueError("experience source entry requires authoritative bullets")
-    if any(
-        len(item.split()) < 4
-        or (local and _bullet_comparison_key(item) not in local)
-        or _bullet_comparison_key(item) not in authoritative
-        for item in selected
-    ):
-        raise ValueError(f"{name} must copy complete bullets from one source entry")
-    return tuple(authoritative[_bullet_comparison_key(item)] for item in selected)
+    return authoritative[:4]
 
 
 def _canonical_source_bullets(source: str) -> tuple[str, ...]:
@@ -773,10 +761,6 @@ def _bullets_immediately_after_header(lines: list[str]) -> tuple[str, ...]:
     if current:
         result.append(" ".join(current).strip())
     return tuple(item for item in result if item)
-
-
-def _bullet_comparison_key(value: str) -> str:
-    return normalize_cv_text(value).rstrip(".!?;:")
 
 
 def _minimum_field_words(name: str) -> int:

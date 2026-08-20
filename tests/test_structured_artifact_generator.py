@@ -348,6 +348,7 @@ def test_application_code_binds_separate_model_bullets_to_header_only_source_blo
                 "Amsterdam",
             )
         ),
+        "bullets": ["Invented a non-canonical production achievement."],
     }
 
     generated = StructuredArtifactGenerator(
@@ -355,9 +356,10 @@ def test_application_code_binds_separate_model_bullets_to_header_only_source_blo
     ).generate(tailoring_request())
 
     assert "- Built reproducible research systems." in generated.cv_text
+    assert "Invented a non-canonical" not in generated.cv_text
 
 
-def test_application_code_rejects_a_truncated_source_bullet():
+def test_application_code_replaces_a_truncated_model_bullet_with_canonical_text():
     selection = professional_selection()
     selection["experience"][0] = {
         **selection["experience"][0],
@@ -368,10 +370,12 @@ def test_application_code_rejects_a_truncated_source_bullet():
         "bullets": ["Built reproducible research"],
     }
 
-    with pytest.raises(ValueError, match="complete bullets"):
-        StructuredArtifactGenerator(
-            RecordingProvider(selection), candidate_name="Synthetic Candidate"
-        ).generate(tailoring_request())
+    generated = StructuredArtifactGenerator(
+        RecordingProvider(selection), candidate_name="Synthetic Candidate"
+    ).generate(tailoring_request())
+
+    assert "- Built reproducible research systems." in generated.cv_text
+    assert "- Built reproducible research\n" not in generated.cv_text
 
 
 def test_uses_one_sonnet_structured_output_request_for_the_whole_bundle():
