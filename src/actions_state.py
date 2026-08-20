@@ -21,6 +21,7 @@ from hosted_artifact_preparation import (
     HostedPreparationInput,
     hosted_preparation_input_filename,
 )
+from hosted_artifact_review_cleanup import TelegramReviewCleanupObligation
 from hosted_preparation_completion import (
     HostedApplicationState,
     HostedArtifactReviewDecision,
@@ -190,6 +191,17 @@ class StateBundle:
                     if path.is_file()
                 )
             )
+        cleanup_obligations = (
+            self.root / "data" / "telegram-review-cleanup-obligations"
+        )
+        if cleanup_obligations.exists():
+            files.extend(
+                sorted(
+                    path
+                    for path in cleanup_obligations.rglob("*.json")
+                    if path.is_file()
+                )
+            )
         return tuple(path for path in files if path.is_file())
 
     def _clear_package(self) -> None:
@@ -319,6 +331,13 @@ def _allowed_state_path(path: Path) -> bool:
         len(path.parts) == 3
         and path.parts[:2] == ("data", "hosted-artifact-review-decisions")
         and path.suffix == ".json"
+    ) or (
+        len(path.parts) == 3
+        and path.parts[:2] == (
+            "data",
+            "telegram-review-cleanup-obligations",
+        )
+        and path.suffix == ".json"
     )
 
 
@@ -345,6 +364,9 @@ def _validate_embedded_version(relative: Path, path: Path) -> None:
         return
     elif _is_hosted_artifact_review_decision_path(relative):
         _validate_hosted_artifact_review_decision(relative, path)
+        return
+    elif _is_telegram_review_cleanup_path(relative):
+        _validate_telegram_review_cleanup(relative, path)
         return
     if expected is None:
         if relative == Path("data/telegram-deliveries.sqlite"):
@@ -478,6 +500,31 @@ def _validate_hosted_artifact_review_decision(
     if relative.name != expected:
         raise ValueError(
             f"Invalid hosted artifact review decision identity: {relative}"
+        )
+
+
+def _is_telegram_review_cleanup_path(relative: Path) -> bool:
+    return (
+        len(relative.parts) == 3
+        and relative.parts[:2]
+        == ("data", "telegram-review-cleanup-obligations")
+        and relative.suffix == ".json"
+    )
+
+
+def _validate_telegram_review_cleanup(relative: Path, path: Path) -> None:
+    try:
+        value = json.loads(path.read_text(encoding="utf-8"))
+        if not isinstance(value, Mapping):
+            raise ValueError
+        parsed = TelegramReviewCleanupObligation.from_dict(value)
+    except (json.JSONDecodeError, TypeError, ValueError) as exc:
+        raise ValueError(
+            f"Invalid Telegram review cleanup obligation: {relative}"
+        ) from exc
+    if value != parsed.to_dict() or relative.name != f"{parsed.review_id}.json":
+        raise ValueError(
+            f"Invalid Telegram review cleanup obligation identity: {relative}"
         )
 
 

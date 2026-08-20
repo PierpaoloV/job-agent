@@ -86,6 +86,12 @@ jobs:
           --workflow run.yml
           --branch ${{ github.event.repository.default_branch }}
 
+      - name: Reconcile protected review cleanup obligations
+        env:
+          PYTHONPATH: src
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+        run: python -m hosted_artifact_review_cleanup
+
       - name: Write Gmail credentials
         env:
           JOB_AGENT_PREFERENCES_YAML: ${{ secrets.JOB_AGENT_PREFERENCES_YAML }}

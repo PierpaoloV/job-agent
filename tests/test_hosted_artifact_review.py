@@ -12,6 +12,9 @@ from hosted_artifact_review import (  # noqa: E402
     acknowledge_gateway_artifact_review,
     recover_gateway_artifact_review_dispatch,
 )
+from hosted_artifact_review_cleanup import (  # noqa: E402
+    TelegramReviewCleanupStore,
+)
 from notify_telegram import TelegramReceipt  # noqa: E402
 
 
@@ -239,6 +242,9 @@ def test_failed_control_binding_immediately_deletes_all_acknowledged_messages(
     def fail_control_bind(url, **kwargs):
         if url.endswith("/messages") and "control_message_id" in kwargs["json"]:
             return Response({"error": "bind failed"}, status=503)
+        if url.endswith("/publication-cleanup"):
+            session.calls.append((url, kwargs))
+            return Response({"error": "gateway unavailable"}, status=503)
         return original_post(url, **kwargs)
 
     session.post = fail_control_bind
@@ -290,6 +296,9 @@ def test_uncertain_compensating_delete_leaves_durable_cleanup_receipts(tmp_path)
     def fail_control_bind(url, **kwargs):
         if url.endswith("/messages") and "control_message_id" in kwargs["json"]:
             return Response({"error": "bind failed"}, status=503)
+        if url.endswith("/publication-cleanup"):
+            session.calls.append((url, kwargs))
+            return Response({"error": "gateway unavailable"}, status=503)
         return original_post(url, **kwargs)
 
     session.post = fail_control_bind
@@ -309,9 +318,12 @@ def test_uncertain_compensating_delete_leaves_durable_cleanup_receipts(tmp_path)
         message_deleter=lambda _receipts: (_ for _ in ()).throw(
             RuntimeError("delete outcome unknown")
         ),
+        cleanup_store=TelegramReviewCleanupStore(
+            tmp_path / "cleanup-obligations"
+        ),
     )
 
-    with pytest.raises(Exception, match="durably scheduled"):
+    with pytest.raises(Exception, match="cleanup is uncertain"):
         publisher.publish(
             application_id=APPLICATION_ID,
             official_vacancy_version=VACANCY_VERSION,
@@ -335,3 +347,7 @@ def test_uncertain_compensating_delete_leaves_durable_cleanup_receipts(tmp_path)
         "document_message_ids": [701, 702],
         "control_message_id": 703,
     }
+    obligation = TelegramReviewCleanupStore(
+        tmp_path / "cleanup-obligations"
+    ).load("review-token-1")
+    assert [item.message_id for item in obligation.receipts] == [701, 702, 703]

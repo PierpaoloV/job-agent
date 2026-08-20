@@ -12,6 +12,7 @@ from typing import Callable, Sequence
 
 from application_domain import PreparedArtifacts
 from hosted_artifact_review import GatewayArtifactReviewPublisher
+from hosted_artifact_review_cleanup import TelegramReviewCleanupStore
 from notify_telegram import TelegramSendRejected
 from telegram_delivery import TelegramDeliveryLedger
 
@@ -533,6 +534,9 @@ def main(argv: Sequence[str] | None = None) -> int:
             internal_token=os.environ["JOB_AGENT_CALLBACK_GATEWAY_TOKEN"],
             actor_id=os.environ["TELEGRAM_ACTOR_ID"],
             chat_id=os.environ["TELEGRAM_CHAT_ID"],
+            cleanup_store=TelegramReviewCleanupStore(
+                Path("data/telegram-review-cleanup-obligations")
+            ),
         )
         dispatch_remote_preparation_completion(
             **kwargs,

@@ -11,6 +11,7 @@ from typing import Callable, Mapping, Sequence
 import requests
 
 from application_domain import PreparedArtifacts
+from hosted_artifact_review_cleanup import TelegramReviewCleanupStore
 from notify_telegram import (
     TelegramDocument,
     TelegramMessage,
@@ -66,6 +67,7 @@ class GatewayArtifactReviewPublisher:
         message_deleter: Callable[[Sequence[TelegramReceipt]], None] = (
             delete_telegram_messages
         ),
+        cleanup_store: TelegramReviewCleanupStore | None = None,
     ) -> None:
         self._endpoint = str(endpoint).rstrip("/")
         self._internal_token = str(internal_token).strip()
@@ -75,6 +77,7 @@ class GatewayArtifactReviewPublisher:
         self._document_sender = document_sender
         self._control_sender = control_sender
         self._message_deleter = message_deleter
+        self._cleanup_store = cleanup_store
         if not self._endpoint.startswith("https://") or not all(
             (self._internal_token, self._actor_id, self._chat_id)
         ):
@@ -123,6 +126,17 @@ class GatewayArtifactReviewPublisher:
             item.message_id for item in document_receipts
         )
         try:
+            self._save_cleanup_obligation(
+                authorization,
+                document_receipts,
+            )
+        except Exception as exc:
+            self._compensate(
+                authorization.review_id,
+                document_receipts,
+                exc,
+            )
+        try:
             self._bind(
                 authorization.review_id,
                 document_message_ids,
@@ -149,11 +163,17 @@ class GatewayArtifactReviewPublisher:
                     },
                 )
             )
+            self._save_cleanup_obligation(
+                authorization,
+                document_receipts + (control_receipt,),
+            )
             self._bind(
                 authorization.review_id,
                 document_message_ids,
                 control_receipt.message_id,
             )
+            if self._cleanup_store is not None:
+                self._cleanup_store.remove(authorization.review_id)
         except Exception as exc:
             receipts = document_receipts + (
                 () if control_receipt is None else (control_receipt,)
@@ -274,6 +294,8 @@ class GatewayArtifactReviewPublisher:
             raise TelegramSendUncertain(
                 "Protected review bind failed and cleanup is uncertain"
             ) from cleanup_error
+        if self._cleanup_store is not None:
+            self._cleanup_store.remove(review_id)
         raise TelegramSendUncertain(
             "Protected review publication was rolled back after bind failure"
         ) from cause
@@ -299,6 +321,18 @@ class GatewayArtifactReviewPublisher:
         return response.ok and response.json() == {
             "status": "expiry_cleanup_uncertain"
         }
+
+    def _save_cleanup_obligation(
+        self,
+        authorization: _ReviewAuthorization,
+        receipts: Sequence[TelegramReceipt],
+    ) -> None:
+        if self._cleanup_store is not None:
+            self._cleanup_store.save(
+                review_id=authorization.review_id,
+                expires_at=authorization.expires_at,
+                receipts=receipts,
+            )
 
 
 def _validate_identity(

@@ -24,6 +24,8 @@ def test_remote_discovery_has_two_dependent_least_privilege_jobs():
     assert "uses: actions/upload-artifact@v4" in ingest
     assert "shortlist-${{ github.run_id }}-${{ github.run_attempt }}" in ingest
     assert "python -m actions_state restore-latest" in ingest
+    assert "python -m hosted_artifact_review_cleanup" in ingest
+    assert "TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}" in ingest
     assert "python -m actions_state write-manifest" in ingest
     assert "--stage ingest" in ingest
     assert (

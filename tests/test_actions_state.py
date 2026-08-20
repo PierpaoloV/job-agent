@@ -19,12 +19,14 @@ from hosted_artifact_preparation import (
     HostedPreparationInput,
     HostedPreparationInputStore,
 )
+from hosted_artifact_review_cleanup import TelegramReviewCleanupStore
 from hosted_preparation_completion import (
     HostedApplicationStateStore,
     HostedArtifactReviewDecisionStore,
     record_hosted_artifact_review_decision,
 )
 from telegram_delivery import TelegramDeliveryLedger
+from notify_telegram import TelegramReceipt
 
 
 def test_state_bundle_manifest_is_versioned_and_hash_validated(tmp_path):
@@ -98,6 +100,27 @@ def test_state_bundle_preserves_exact_hosted_artifact_approval(tmp_path):
     assert any(
         path.startswith("data/hosted-artifact-review-decisions/")
         for path in manifest["files"]
+    )
+    StateBundle(tmp_path).validate_manifest()
+
+
+def test_state_bundle_preserves_unresolved_telegram_cleanup_receipts(tmp_path):
+    TelegramReviewCleanupStore(
+        tmp_path / "data" / "telegram-review-cleanup-obligations"
+    ).save(
+        review_id="review-token-1",
+        expires_at="2026-08-21T10:00:00Z",
+        receipts=(
+            TelegramReceipt(message_id=701, chat_id="42"),
+            TelegramReceipt(message_id=702, chat_id="42"),
+        ),
+    )
+
+    manifest = StateBundle(tmp_path).write_manifest()
+
+    assert (
+        "data/telegram-review-cleanup-obligations/review-token-1.json"
+        in manifest["files"]
     )
     StateBundle(tmp_path).validate_manifest()
 
