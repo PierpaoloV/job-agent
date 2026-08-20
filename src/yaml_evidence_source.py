@@ -13,7 +13,7 @@ import re
 from typing import Any, Iterable, Mapping
 
 import yaml
-from pypdf import PdfReader
+import pymupdf
 
 from application_artifacts import EvidenceBankSnapshot, EvidenceRecord
 from application_domain import ArtifactFamily, EvidenceKind
@@ -49,12 +49,34 @@ _SAFE_SECTION_HEADINGS = {
 }
 _SENSITIVE_LINE = re.compile(
     r"\b(?:"
-    r"api key|access token|ats answer|citizen|citizenship|date of birth|"
+    r"api[ _-]?key|access[ _-]?token|refresh[ _-]?token|auth(?:entication)?[ _-]?token|"
+    r"ats answer|bearer token|citizen|citizenship|client[ _-]?secret|credential|"
+    r"date of birth|"
     r"demographic|diagnos\w*|disabil\w*|ethnic\w*|gender|health condition|"
-    r"identity document|marital|nationality|passport|password|race|religio\w*|"
-    r"social security|tax id"
+    r"identity document|marital|nationality|oauth|passport|passphrase|password|"
+    r"private[ _-]?key|race|religio\w*|secret(?:[ _-]?key)?|social security|"
+    r"ssh[ _-]?key|tax id|webhook[ _-]?(?:secret|token)"
     r")\b",
     re.IGNORECASE,
+)
+_SECRET_VALUE = re.compile(
+    r"(?:-----BEGIN [A-Z ]*PRIVATE KEY-----|\bsk-[A-Za-z0-9_-]{12,}|"
+    r"\bghp_[A-Za-z0-9]{12,}|\bgithub_pat_[A-Za-z0-9_]{12,}|"
+    r"\bxox[baprs]-[A-Za-z0-9-]{12,}|\bAKIA[A-Z0-9]{12,}|"
+    r"\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,})",
+    re.IGNORECASE,
+)
+_HEADER_CONTACT = re.compile(
+    r"(?:@|https?://|www\.|github|linkedin|orcid|google scholar|"
+    r"\+?\d[\d ()+.-]{6,}\d)",
+    re.IGNORECASE,
+)
+_HEADER_PROFESSION = re.compile(
+    r"\b(?:phd|researcher|scientist|engineer|machine learning|artificial intelligence)\b",
+    re.IGNORECASE,
+)
+_PAGE_FOOTER = re.compile(
+    r"(?:complete curriculum vitae|curriculum vitae)\s+\d+$", re.IGNORECASE
 )
 
 
@@ -73,10 +95,11 @@ class YamlEvidenceSource:
             raise ValueError("evidence bank must contain a YAML mapping")
 
         records = tuple(self._records(payload))
-        extracted_cv_text = "\n".join(
-            (page.extract_text() or "").strip()
-            for page in PdfReader(self._canonical_cv_path).pages
-        ).strip()
+        with pymupdf.open(self._canonical_cv_path) as document:
+            extracted_cv_text = "\n".join(
+                (page.get_text("text", sort=True) or "").strip()
+                for page in document
+            ).strip()
         canonical_cv_text = _professional_cv_projection(extracted_cv_text)
         if not canonical_cv_text:
             raise ValueError("canonical CV must contain extractable text")
@@ -139,7 +162,8 @@ def _sha256(value: bytes) -> str:
 
 def _professional_cv_projection(value: str) -> str:
     projected: list[str] = []
-    blocked_section = False
+    blocked_section = True
+    kept_identity = False
     for raw_line in str(value).splitlines():
         line = raw_line.strip()
         if not line:
@@ -152,8 +176,19 @@ def _professional_cv_projection(value: str) -> str:
             continue
         if heading in _SAFE_SECTION_HEADINGS:
             blocked_section = False
-        if blocked_section or _SENSITIVE_LINE.search(line):
+        if (
+            _SENSITIVE_LINE.search(line)
+            or _SECRET_VALUE.search(line)
+            or _PAGE_FOOTER.search(line)
+        ):
             continue
+        if blocked_section:
+            if not kept_identity:
+                projected.append(line)
+                kept_identity = True
+                continue
+            if not (_HEADER_CONTACT.search(line) or _HEADER_PROFESSION.search(line)):
+                continue
         projected.append(line)
     return "\n".join(projected).strip()
 

@@ -22,6 +22,7 @@ from application_artifacts import (  # noqa: E402
     RequirementImportance,
     RequirementStatus,
     TruthfulApplicationArtifactService,
+    canonical_cv_evidence_id,
 )
 from application_domain import OfficialVacancy, PreparedArtifacts  # noqa: E402
 
@@ -225,6 +226,54 @@ def test_prepare_reuses_deep_grading_matrix_and_generates_one_traced_bundle():
     ]
     assert artifacts.stretch_decision.is_stretch is False
     assert PreparedArtifacts.from_dict(asdict(artifacts)) == artifacts
+
+
+def test_generator_cannot_self_approve_invented_canonical_cv_evidence():
+    invented = "Invented a production system serving one billion users."
+    evidence_id = canonical_cv_evidence_id(invented, EvidenceKind.EXPERIENCE)
+    malicious = GeneratedArtifactBundle(
+        cv_text=invented,
+        cover_letter_text=invented,
+        claims=(
+            MaterialClaim(
+                statement=invented,
+                kind=EvidenceKind.EXPERIENCE,
+                evidence_ids=(evidence_id,),
+                appears_in=(ArtifactDocument.CV, ArtifactDocument.COVER_LETTER),
+            ),
+        ),
+        additional_evidence=(
+            EvidenceRecord(
+                evidence_id=evidence_id,
+                families=(ArtifactFamily.RESEARCH,),
+                kinds=(EvidenceKind.EXPERIENCE,),
+                approved_statement=invented,
+                source_reference="master-cv-v1",
+            ),
+        ),
+    )
+    snapshot = replace(
+        evidence_snapshot(),
+        canonical_cv_text="Verified canonical professional history only.",
+    )
+    service = TruthfulApplicationArtifactService(
+        evidence_source=ReloadableEvidenceSource(snapshot),
+        generator=FakeBundleGenerator(malicious),
+        claim_auditor=FakeClaimAuditor(),
+        renderer=FakeBundleRenderer(),
+    )
+
+    try:
+        service.prepare(
+            "synthetic-001",
+            "prepare:token-1",
+            synthetic_opportunity(),
+            verified_vacancy(),
+        )
+    except ValueError as error:
+        assert "not authoritative" in str(error)
+    else:
+        raise AssertionError("generator self-approved invented canonical evidence")
 
 
 def test_persisted_artifact_vocabulary_reloads_as_typed_domain_values():

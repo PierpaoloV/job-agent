@@ -152,10 +152,13 @@ The inputs have deliberately different purposes:
 - `preferences.yaml` controls deterministic screening and ranking preferences.
 - the canonical CV PDF is both the source-version anchor and the authoritative
   professional source for contact details, profile, role metadata, education,
-  and publications. Its text must be extractable. Sensitive personal-profile
-  lines are filtered before Anthropic, and every selected material source line
-  receives a deterministic evidence trace. The hosted transport expects its
-  configured URL to be directly downloadable over HTTPS.
+  and publications. Its text must be extractable. A fail-closed professional
+  projection removes personal-profile and credential-bearing lines before
+  Anthropic. Every selected material source line receives a deterministic
+  evidence trace that the orchestration service independently binds to the
+  exact CV version; experience and education travel as indivisible source
+  blocks. The hosted transport expects its configured URL to be directly
+  downloadable over HTTPS.
 
 The installer rejects inline secret fields. Export secrets into the variable
 names referenced by `hosted-config.yaml`:

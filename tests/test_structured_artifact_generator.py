@@ -116,16 +116,23 @@ def professional_source():
             "Synthetic Candidate",
             "Applied AI Researcher",
             "synthetic@example.com",
-            "Applied AI researcher building reproducible systems.",
-            "I validate machine-learning systems against real requirements.",
+            "Professional Profile",
+            "Applied AI researcher building reproducible machine-learning systems for clinical computer vision.",
+            "I validate machine-learning systems against real operational requirements and independent",
+            "evaluation datasets.",
+            "Professional Experience",
             "Machine Learning Researcher",
+            "2022 - Present",
             "Example Institute",
             "Amsterdam",
-            "2022 - Present",
             "Built reproducible research systems.",
+            "Education",
             "PhD in Artificial Intelligence",
-            "Example University",
             "2018 - 2022",
+            "Example University",
+            "Amsterdam",
+            "Peer-Reviewed Publications and Proceedings",
+            "Reproducible machine-learning systems for trustworthy computer vision.",
         )
     )
 
@@ -134,9 +141,20 @@ def professional_selection(**updates):
     payload = {
         "headline": "Applied AI Researcher",
         "contacts": ["synthetic@example.com"],
-        "summary": ["Applied AI researcher building reproducible systems."],
+        "summary": [
+            "Applied AI researcher building reproducible machine-learning systems for clinical computer vision."
+        ],
         "experience": [
             {
+                "source_block": "\n".join(
+                    (
+                        "Machine Learning Researcher",
+                        "2022 - Present",
+                        "Example Institute",
+                        "Amsterdam",
+                        "Built reproducible research systems.",
+                    )
+                ),
                 "role": "Machine Learning Researcher",
                 "organization": "Example Institute",
                 "location": "Amsterdam",
@@ -146,19 +164,28 @@ def professional_selection(**updates):
         ],
         "education": [
             {
+                "source_block": "\n".join(
+                    (
+                        "PhD in Artificial Intelligence",
+                        "2018 - 2022",
+                        "Example University",
+                        "Amsterdam",
+                    )
+                ),
                 "degree": "PhD in Artificial Intelligence",
                 "institution": "Example University",
                 "location": "Amsterdam",
                 "dates": "2018 - 2022",
             }
         ],
-        "selected_publications": [],
+        "selected_publications": [
+            "Reproducible machine-learning systems for trustworthy computer vision."
+        ],
         "selected_evidence_ids": ["python-research"],
         "target_requirement_ids": ["req-python"],
         "target_role": "computer-vision research systems",
         "cover_letter_source_paragraphs": [
-            "Applied AI researcher building reproducible systems.",
-            "I validate machine-learning systems against real requirements.",
+            "I validate machine-learning systems against real operational requirements and independent evaluation datasets.",
         ],
     }
     payload.update(updates)
@@ -211,7 +238,10 @@ def test_generates_both_documents_and_exact_claim_traces_in_one_provider_call():
         claim for claim in generated.claims if claim.evidence_ids == ("python-research",)
     )
     assert skill_claim.kind == EvidenceKind.SKILL
-    assert skill_claim.appears_in == (ArtifactDocument.CV,)
+    assert skill_claim.appears_in == (
+        ArtifactDocument.CV,
+        ArtifactDocument.COVER_LETTER,
+    )
     assert generated.additional_evidence
 
 
@@ -219,9 +249,20 @@ def test_uses_one_sonnet_structured_output_request_for_the_whole_bundle():
     model_payload = {
         "headline": "Applied AI Researcher",
         "contacts": ["synthetic@example.com"],
-        "summary": ["Applied AI researcher building machine-learning systems."],
+        "summary": [
+            "Applied AI researcher building trustworthy machine-learning systems for clinical computer vision."
+        ],
         "experience": [
             {
+                "source_block": "\n".join(
+                    (
+                        "Machine Learning Researcher",
+                        "2022 - Present",
+                        "Example Institute",
+                        "Amsterdam",
+                        "Built reproducible research systems.",
+                    )
+                ),
                 "role": "Machine Learning Researcher",
                 "organization": "Example Institute",
                 "location": "Amsterdam",
@@ -231,19 +272,28 @@ def test_uses_one_sonnet_structured_output_request_for_the_whole_bundle():
         ],
         "education": [
             {
+                "source_block": "\n".join(
+                    (
+                        "PhD in Artificial Intelligence",
+                        "2018 - 2022",
+                        "Example University",
+                        "Amsterdam",
+                    )
+                ),
                 "degree": "PhD in Artificial Intelligence",
                 "institution": "Example University",
                 "location": "Amsterdam",
                 "dates": "2018 - 2022",
             }
         ],
-        "selected_publications": [],
+        "selected_publications": [
+            "Reproducible machine-learning systems for trustworthy computer vision."
+        ],
         "selected_evidence_ids": ["python-research"],
         "target_requirement_ids": ["req-python"],
         "target_role": "computer-vision research systems",
         "cover_letter_source_paragraphs": [
-            "Applied AI researcher building machine-learning systems.",
-            "I validate machine-learning systems against real requirements.",
+            "I validate machine-learning systems against real operational requirements and independent evaluation datasets.",
         ],
     }
     post = RecordingPost(
@@ -262,16 +312,21 @@ def test_uses_one_sonnet_structured_output_request_for_the_whole_bundle():
             "Synthetic Candidate",
             "Applied AI Researcher",
             "synthetic@example.com",
-            "Applied AI researcher building machine-\nlearning systems.",
-            "I validate machine-learning systems against real requirements.",
+            "Applied AI researcher building trustworthy machine-\nlearning systems for clinical computer vision.",
+            "I validate machine-learning systems against real operational requirements and independent evaluation datasets.",
+            "Professional Experience",
             "Machine Learning Researcher",
+            "2022 - Present",
             "Example Institute",
             "Amsterdam",
-            "2022 - Present",
             "Built reproducible research systems.",
+            "Education",
             "PhD in Artificial Intelligence",
-            "Example University",
             "2018 - 2022",
+            "Example University",
+            "Amsterdam",
+            "Peer-Reviewed Publications and Proceedings",
+            "Reproducible machine-learning systems for trustworthy computer vision.",
         )
     )
     generated = generator.generate(
@@ -343,6 +398,71 @@ def test_structured_generation_requires_approved_technical_skill_evidence():
                 evidence=(impact,),
             )
         )
+
+
+def test_structured_generation_rejects_fields_mixed_across_source_roles():
+    second_role = "\n".join(
+        (
+            "Research Engineer",
+            "2020 - 2022",
+            "Different Institute",
+            "London",
+            "Built a separate trustworthy research platform.",
+        )
+    )
+    source = professional_source().replace(
+        "\nEducation\n", f"\n{second_role}\nEducation\n"
+    )
+    mixed = professional_selection()
+    mixed["experience"] = [
+        {
+            "source_block": "\n".join(
+                (
+                    "Machine Learning Researcher",
+                    "2022 - Present",
+                    "Example Institute",
+                    "Amsterdam",
+                    "Built reproducible research systems.",
+                    "Research Engineer",
+                    "2020 - 2022",
+                    "Different Institute",
+                    "London",
+                    "Built a separate trustworthy research platform.",
+                )
+            ),
+            "role": "Machine Learning Researcher",
+            "organization": "Different Institute",
+            "location": "London",
+            "dates": "2020 - 2022",
+            "bullets": ["Built a separate trustworthy research platform."],
+        }
+    ]
+
+    with pytest.raises(ValueError, match="does not bind one source entry"):
+        StructuredArtifactGenerator(
+            RecordingProvider(mixed),
+            candidate_name="Synthetic Candidate",
+        ).generate(replace(tailoring_request(), canonical_cv_text=source))
+
+
+def test_structured_generation_requires_publication_and_first_person_letter_source():
+    generator = lambda payload: StructuredArtifactGenerator(  # noqa: E731
+        RecordingProvider(payload),
+        candidate_name="Synthetic Candidate",
+    )
+
+    with pytest.raises(ValueError, match="selected_publications"):
+        generator(professional_selection(selected_publications=[])).generate(
+            tailoring_request()
+        )
+    with pytest.raises(ValueError, match="first-person"):
+        generator(
+            professional_selection(
+                cover_letter_source_paragraphs=[
+                    "Applied AI researcher building reproducible machine-learning systems for clinical computer vision."
+                ]
+            )
+        ).generate(tailoring_request())
 
 
 def test_deterministic_audit_rejects_untraced_professional_text():
@@ -482,18 +602,22 @@ def test_production_bundle_preserves_complete_master_cv_identity_and_structure(
         "Applied AI Researcher",
         "synthetic@example.com | example.com/synthetic",
         "Professional Profile",
-        "Applied AI researcher building reproducible machine-learning systems.",
-        "I validate machine-learning systems against real requirements.",
+        "Applied AI researcher building reproducible machine-learning systems for clinical computer vision.",
+        "I validate machine-learning systems against real operational requirements and independent",
+        "evaluation datasets.",
         "Professional Experience",
         "Machine Learning Researcher",
+        "2022 - Present",
         "Example Research Institute",
         "Amsterdam, The Netherlands",
-        "2022 - Present",
         "Built reproducible computer-vision research pipelines.",
         "Education",
         "PhD in Artificial Intelligence",
-        "Example University",
         "2018 - 2022",
+        "Example University",
+        "Amsterdam, The Netherlands",
+        "Peer-Reviewed Publications and Proceedings",
+        "Reproducible machine-learning systems for trustworthy computer vision.",
     )
     y = 800
     for line in source_lines:
@@ -528,10 +652,19 @@ def test_production_bundle_preserves_complete_master_cv_identity_and_structure(
                 "example.com/synthetic",
             ],
             "summary": [
-                "Applied AI researcher building reproducible machine-learning systems."
+                "Applied AI researcher building reproducible machine-learning systems for clinical computer vision."
             ],
             "experience": [
                 {
+                    "source_block": "\n".join(
+                        (
+                            "Machine Learning Researcher",
+                            "2022 - Present",
+                            "Example Research Institute",
+                            "Amsterdam, The Netherlands",
+                            "Built reproducible computer-vision research pipelines.",
+                        )
+                    ),
                     "role": "Machine Learning Researcher",
                     "organization": "Example Research Institute",
                     "location": "Amsterdam, The Netherlands",
@@ -543,19 +676,28 @@ def test_production_bundle_preserves_complete_master_cv_identity_and_structure(
             ],
             "education": [
                 {
+                    "source_block": "\n".join(
+                        (
+                            "PhD in Artificial Intelligence",
+                            "2018 - 2022",
+                            "Example University",
+                            "Amsterdam, The Netherlands",
+                        )
+                    ),
                     "degree": "PhD in Artificial Intelligence",
                     "institution": "Example University",
                     "location": "Amsterdam, The Netherlands",
                     "dates": "2018 - 2022",
                 }
             ],
-            "selected_publications": [],
+            "selected_publications": [
+                "Reproducible machine-learning systems for trustworthy computer vision."
+            ],
             "selected_evidence_ids": ["python-research"],
             "target_requirement_ids": ["req-python"],
             "target_role": "computer-vision research systems",
             "cover_letter_source_paragraphs": [
-                "Applied AI researcher building reproducible machine-learning systems.",
-                "I validate machine-learning systems against real requirements.",
+                "I validate machine-learning systems against real operational requirements and independent evaluation datasets.",
             ],
         }
     )
@@ -593,7 +735,8 @@ def test_production_bundle_preserves_complete_master_cv_identity_and_structure(
     assert "EDUCATION" in cv_text
     assert "PhD in Artificial Intelligence" in cv_text
     assert "TECHNICAL SKILLS" in cv_text
-    assert "Applied AI researcher building reproducible" in letter_text
+    assert "I validate machine-learning systems" in letter_text
+    assert "Uses Python to build reproducible" in letter_text
     assert len(PdfReader(artifacts.cv_path).pages) <= 2
     traced = {claim.statement for claim in artifacts.claims}
     assert "Machine Learning Researcher" in traced

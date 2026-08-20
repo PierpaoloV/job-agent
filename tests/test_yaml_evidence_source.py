@@ -126,8 +126,11 @@ def test_canonical_cv_projection_excludes_sensitive_profile_lines(tmp_path):
         (780, "synthetic@example.com"),
         (760, "Italian citizen based in the Netherlands"),
         (740, "Date of birth: 1990-01-01"),
-        (720, "Professional Experience"),
-        (700, "Machine Learning Researcher"),
+        (720, "Private key: TOP-SECRET"),
+        (700, "Client secret: client-secret-value"),
+        (680, "Refresh token: refresh-token-value"),
+        (660, "Professional Experience"),
+        (640, "Machine Learning Researcher"),
     ):
         canvas.drawString(50, y, line)
     canvas.save()
@@ -141,3 +144,6 @@ def test_canonical_cv_projection_excludes_sensitive_profile_lines(tmp_path):
     assert "Machine Learning Researcher" in projected
     assert "citizen" not in projected.casefold()
     assert "date of birth" not in projected.casefold()
+    assert "top-secret" not in projected.casefold()
+    assert "client-secret-value" not in projected.casefold()
+    assert "refresh-token-value" not in projected.casefold()

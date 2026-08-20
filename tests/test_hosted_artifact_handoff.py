@@ -448,16 +448,23 @@ def test_hosted_preparation_uses_authoritative_input_and_exports_one_package(
         "Synthetic Candidate",
         "Applied AI Researcher",
         "synthetic@example.com",
-        "Applied AI researcher building reproducible systems.",
-        "I validate machine-learning systems against real requirements.",
+        "Professional Profile",
+        "Applied AI researcher building reproducible machine-learning systems for clinical computer vision.",
+        "I validate machine-learning systems against real operational requirements and independent",
+        "evaluation datasets.",
+        "Professional Experience",
         "Machine Learning Researcher",
+        "2022 - Present",
         "Example Institute",
         "Amsterdam",
-        "2022 - Present",
         "Built reproducible research systems.",
+        "Education",
         "PhD in Artificial Intelligence",
-        "Example University",
         "2018 - 2022",
+        "Example University",
+        "Amsterdam",
+        "Peer-Reviewed Publications and Proceedings",
+        "Reproducible machine-learning systems for trustworthy computer vision.",
     ):
         canvas.drawString(50, y, line)
         y -= 18
@@ -496,9 +503,20 @@ def test_hosted_preparation_uses_authoritative_input_and_exports_one_package(
         {
             "headline": "Applied AI Researcher",
             "contacts": ["synthetic@example.com"],
-            "summary": ["Applied AI researcher building reproducible systems."],
+            "summary": [
+                "Applied AI researcher building reproducible machine-learning systems for clinical computer vision."
+            ],
             "experience": [
                 {
+                    "source_block": "\n".join(
+                        (
+                            "Machine Learning Researcher",
+                            "2022 - Present",
+                            "Example Institute",
+                            "Amsterdam",
+                            "Built reproducible research systems.",
+                        )
+                    ),
                     "role": "Machine Learning Researcher",
                     "organization": "Example Institute",
                     "location": "Amsterdam",
@@ -508,19 +526,28 @@ def test_hosted_preparation_uses_authoritative_input_and_exports_one_package(
             ],
             "education": [
                 {
+                    "source_block": "\n".join(
+                        (
+                            "PhD in Artificial Intelligence",
+                            "2018 - 2022",
+                            "Example University",
+                            "Amsterdam",
+                        )
+                    ),
                     "degree": "PhD in Artificial Intelligence",
                     "institution": "Example University",
                     "location": "Amsterdam",
                     "dates": "2018 - 2022",
                 }
             ],
-            "selected_publications": [],
+            "selected_publications": [
+                "Reproducible machine-learning systems for trustworthy computer vision."
+            ],
             "selected_evidence_ids": ["skill-python"],
             "target_requirement_ids": ["req-python"],
             "target_role": "computer-vision research systems",
             "cover_letter_source_paragraphs": [
-                "Applied AI researcher building reproducible systems.",
-                "I validate machine-learning systems against real requirements.",
+                "I validate machine-learning systems against real operational requirements and independent evaluation datasets.",
             ],
         }
     )

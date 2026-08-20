@@ -15,18 +15,24 @@ gate.
 The generation contract sends the professional text extracted from the
 candidate-owned canonical CV together with the approved evidence bank. Sonnet
 selects, but may not invent or paraphrase, contact details, profile excerpts,
-one to three relevant roles, education, and optional publications. The runtime
-validates every selected excerpt against the master source, requires an email,
-experience, education, summary, and approved tailored evidence, then renders a
-styled ATS-readable document capped at two pages.
+one to three relevant roles, education, and at least one relevant publication.
+Roles and education are selected as contiguous source blocks whose leading
+field pairs are validated together, preventing a role from being combined with
+another employer or date. The runtime validates every selected excerpt against
+the master source, requires an email, substantial summary, experience,
+education, technical skills, publications, and approved tailored evidence,
+then renders a styled ATS-readable document capped at two pages.
 Before the model call, the canonical projection removes health, demographic,
 identity-document, secret-credential, ATS-answer, and personal-interest lines.
 Every selected material excerpt becomes an exact, deterministic canonical-CV
-evidence record and claim trace; source membership never bypasses the audit.
+evidence record and claim trace. The orchestration service independently
+rebuilds approval from the exact CV version; a generator cannot approve its own
+record and source membership never bypasses the audit.
 The letter must name a role copied from the official vacancy, cite one to three
-persisted requirement IDs, and select at least two matching first-person master
-CV paragraphs. At least one selected approved evidence record must be a
-technical skill.
+persisted requirement IDs, include the approved evidence tied to each selected
+requirement, and use one or two substantial master-CV paragraphs with at least
+one first-person passage. At least one selected approved evidence record must
+be a technical skill.
 
 ## Safety invariants
 

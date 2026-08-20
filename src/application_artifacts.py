@@ -6,7 +6,9 @@ from dataclasses import asdict, dataclass
 import hashlib
 import json
 from pathlib import Path
+import re
 from typing import Any, Mapping, Protocol
+import unicodedata
 
 from application_domain import (
     ArtifactClaimTrace,
@@ -222,7 +224,12 @@ class TruthfulApplicationArtifactService:
             canonical_cv_text=snapshot.canonical_cv_text,
         )
         generated = self._generator.generate(request)
-        audit_evidence = (*evidence, *generated.additional_evidence)
+        canonical_evidence = self._verify_canonical_evidence(
+            snapshot=snapshot,
+            generated=generated,
+            family=family,
+        )
+        audit_evidence = (*evidence, *canonical_evidence)
         audit = self._claim_auditor.audit(generated, audit_evidence)
         if not audit.complete:
             raise ValueError("full-document material claim audit is incomplete")
@@ -267,6 +274,56 @@ class TruthfulApplicationArtifactService:
             claims=traces,
             stretch_decision=stretch,
         )
+
+    @staticmethod
+    def _verify_canonical_evidence(
+        *,
+        snapshot: EvidenceBankSnapshot,
+        generated: GeneratedArtifactBundle,
+        family: ArtifactFamily,
+    ) -> tuple[EvidenceRecord, ...]:
+        """Rebuild model-selected CV evidence from the authoritative snapshot.
+
+        The generator may propose records, but cannot approve them. This service
+        independently binds every record to the canonical CV version, exact
+        normalized source text, expected family/kind, and deterministic ID.
+        """
+
+        proposed = {item.evidence_id: item for item in generated.additional_evidence}
+        canonical_ids = {
+            evidence_id
+            for claim in generated.claims
+            for evidence_id in claim.evidence_ids
+            if evidence_id.startswith("canonical-cv:")
+        }
+        if set(proposed) != canonical_ids:
+            raise ValueError("canonical CV claim evidence set is incomplete")
+        source = normalize_cv_text(snapshot.canonical_cv_text)
+        verified: list[EvidenceRecord] = []
+        for evidence_id in sorted(canonical_ids):
+            item = proposed[evidence_id]
+            if (
+                not item.approved
+                or item.families != (family,)
+                or len(item.kinds) != 1
+                or item.source_reference != snapshot.canonical_cv_version
+                or evidence_id
+                != canonical_cv_evidence_id(item.approved_statement, item.kinds[0])
+                or not item.approved_statement.strip()
+                or normalize_cv_text(item.approved_statement) not in source
+            ):
+                raise ValueError("generated canonical CV evidence is not authoritative")
+            verified.append(
+                EvidenceRecord(
+                    evidence_id=evidence_id,
+                    families=(family,),
+                    kinds=item.kinds,
+                    approved_statement=item.approved_statement,
+                    source_reference=snapshot.canonical_cv_version,
+                    approved=True,
+                )
+            )
+        return tuple(verified)
 
     def _snapshot(self) -> EvidenceBankSnapshot:
         if self._evidence_snapshot is None:
@@ -500,6 +557,20 @@ def _matches_file_hash(path: str, expected: str) -> bool:
     return expected == f"sha256:{digest}"
 
 
+def normalize_cv_text(value: str) -> str:
+    """Canonical comparison form shared by source and audit boundaries."""
+
+    normalized = unicodedata.normalize("NFKC", str(value))
+    normalized = re.sub(r"[‐‑‒–—−]", "-", normalized)
+    normalized = re.sub(r"-\s+", "-", normalized)
+    return " ".join(normalized.split()).casefold()
+
+
+def canonical_cv_evidence_id(statement: str, kind: EvidenceKind) -> str:
+    encoded = f"{kind.value}\0{normalize_cv_text(statement)}".encode("utf-8")
+    return f"canonical-cv:{hashlib.sha256(encoded).hexdigest()}"
+
+
 __all__ = [
     "ArtifactDocument",
     "ArtifactFamily",
@@ -516,4 +587,6 @@ __all__ = [
     "RequirementStatus",
     "TailoringRequest",
     "TruthfulApplicationArtifactService",
+    "canonical_cv_evidence_id",
+    "normalize_cv_text",
 ]

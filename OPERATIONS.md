@@ -102,8 +102,11 @@ release. Its extractable professional text is the authoritative source for
 contact details, role metadata, education, and other CV structure selected by
 Sonnet; personal health, demographic, identity-document, secret-credential,
 and ATS-answer lines are removed before that boundary. Every selected material
-line receives a canonical-CV evidence ID, while the private evidence YAML
-remains the authority for tailored requirement claims.
+line receives a canonical-CV evidence ID that the orchestration service
+independently revalidates against the exact master-CV version. Experience and
+education are selected as contiguous source blocks, so fields from different
+records cannot be combined. The private evidence YAML remains the authority
+for tailored requirement claims.
 Publishing a new master CV and updating `JOB_AGENT_EVIDENCE_YAML` must be
 treated as one source-version update before preparing another role.
 

@@ -2,11 +2,9 @@
 
 from __future__ import annotations
 
-import hashlib
 import json
 import os
 import re
-import unicodedata
 from typing import Any, Callable, Mapping, Protocol
 
 import requests
@@ -17,6 +15,8 @@ from application_artifacts import (
     GeneratedArtifactBundle,
     MaterialClaim,
     TailoringRequest,
+    canonical_cv_evidence_id,
+    normalize_cv_text,
 )
 from application_domain import ArtifactDocument, EvidenceKind
 
@@ -197,12 +197,14 @@ def _generation_request(
             "schema_version": "job-agent.artifact-generation.v1",
             "instructions": [
                 "Select a complete, ATS-friendly CV and cover letter together.",
-                "Copy every profile, contact, role, employer, date, location, bullet, education, publication, and cover-letter source paragraph exactly from canonical_cv_text.",
+                "Copy every profile, contact, complete experience/education source block, publication, and cover-letter source paragraph exactly from canonical_cv_text.",
                 "Select one to three recent, relevant roles and one to three education entries.",
+                "For every role or education entry, source_block must be one contiguous canonical-CV block beginning with role/degree plus dates, then organization/institution plus location; paired fields may share a line.",
+                "For selected bullets, omit only the leading bullet glyph and copy the complete remaining bullet text from source_block.",
                 "Include an email address in contacts.",
                 "Select only approved_evidence identifiers relevant to the persisted requirements matrix.",
                 "Select one to three target requirement ids that justify the cover letter and include every selected evidence id.",
-                "Copy a non-empty target role from the official vacancy and select two to three first-person master-CV paragraphs relevant to those requirements.",
+                "Copy a non-empty target role from the official vacancy and select one to two substantial master-CV paragraphs; at least one must use I, my, or me.",
                 "Do not invent or paraphrase professional facts, skills, impact, metrics, employers, dates, credentials, or experience.",
                 "Prefer enough source material for a polished one-to-two-page CV, without copying the complete master CV.",
                 "Preserve metric scope and expose required gaps through the supplied stretch decision.",
@@ -252,7 +254,7 @@ def _build_professional_documents(
         raise ValueError("canonical CV text is required for professional artifacts")
     if (
         not candidate_name
-        or _normalized_source(candidate_name) not in _normalized_source(source)
+        or normalize_cv_text(candidate_name) not in normalize_cv_text(source)
     ):
         raise ValueError("candidate identity must match the canonical CV")
     approved = {item.evidence_id: item for item in request.evidence if item.approved}
@@ -267,16 +269,24 @@ def _build_professional_documents(
     ):
         raise ValueError("artifact selection requires approved technical skill evidence")
 
-    headline = _source_value(payload, "headline", source)
+    headline = _source_value(payload, "headline", source, minimum_words=2)
     contacts = _source_values(payload, "contacts", source, minimum=1, maximum=5)
     if not any("@" in value for value in contacts):
         raise ValueError("professional CV requires an email contact")
-    summary = _source_values(payload, "summary", source, minimum=1, maximum=3)
+    summary = _source_values(
+        payload,
+        "summary",
+        source,
+        minimum=1,
+        maximum=3,
+        minimum_words=8,
+    )
     experience = _source_entries(
         payload,
         "experience",
         source,
         required=("role", "organization", "location", "dates"),
+        header_order=("role", "dates", "organization", "location"),
         list_fields=("bullets",),
         minimum=1,
         maximum=3,
@@ -286,6 +296,7 @@ def _build_professional_documents(
         "education",
         source,
         required=("degree", "institution", "location", "dates"),
+        header_order=("degree", "dates", "institution", "location"),
         list_fields=(),
         minimum=1,
         maximum=3,
@@ -294,20 +305,24 @@ def _build_professional_documents(
         payload,
         "selected_publications",
         source,
-        minimum=0,
+        minimum=1,
         maximum=3,
+        minimum_words=6,
     )
     cover_source = _source_values(
         payload,
         "cover_letter_source_paragraphs",
         source,
-        minimum=2,
-        maximum=3,
+        minimum=1,
+        maximum=2,
+        minimum_words=10,
     )
+    if not any(re.search(r"\b(?:I|my|me)\b", item, re.IGNORECASE) for item in cover_source):
+        raise ValueError("cover letter requires a first-person canonical CV paragraph")
     target_role = str(payload.get("target_role", "")).strip()
-    if not target_role or _normalized_source(
+    if not target_role or normalize_cv_text(
         target_role
-    ) not in _normalized_source(request.official_vacancy.description):
+    ) not in normalize_cv_text(request.official_vacancy.description):
         raise ValueError("target_role must copy the official vacancy")
     raw_requirement_ids = payload.get("target_requirement_ids")
     if not isinstance(raw_requirement_ids, list) or not 1 <= len(
@@ -328,6 +343,11 @@ def _build_professional_documents(
     }
     if not set(selected_ids).issubset(referenced_evidence):
         raise ValueError("cover letter requirements must justify selected evidence")
+    if any(
+        not set(requirement.evidence_ids).intersection(selected_ids)
+        for requirement in target_requirements
+    ):
+        raise ValueError("every cover letter requirement needs selected evidence")
     opening = f"I am applying for the {target_role} opportunity."
     requirement_focus = (
         "The role's focus on "
@@ -340,7 +360,7 @@ def _build_professional_documents(
             statement=approved[evidence_id].approved_statement,
             kind=approved[evidence_id].kinds[0],
             evidence_ids=(evidence_id,),
-            appears_in=(ArtifactDocument.CV,),
+            appears_in=(ArtifactDocument.CV, ArtifactDocument.COVER_LETTER),
         )
         for evidence_id in selected_ids
     )
@@ -386,7 +406,7 @@ def _build_professional_documents(
 
     additional_evidence = tuple(
         EvidenceRecord(
-            evidence_id=_canonical_evidence_id(statement, kind),
+            evidence_id=canonical_cv_evidence_id(statement, kind),
             families=(request.family,),
             kinds=(kind,),
             approved_statement=statement,
@@ -398,7 +418,7 @@ def _build_professional_documents(
         MaterialClaim(
             statement=statement,
             kind=kind,
-            evidence_ids=(_canonical_evidence_id(statement, kind),),
+            evidence_ids=(canonical_cv_evidence_id(statement, kind),),
             appears_in=tuple(
                 document
                 for document in (
@@ -465,6 +485,9 @@ def _build_professional_documents(
             opening,
             requirement_focus,
             "",
+            "My background directly addresses these requirements:",
+            *(f"- {claim.statement}" for claim in selected_claims),
+            "",
             *cover_source,
             "",
         )
@@ -490,13 +513,24 @@ def _build_professional_documents(
             target_role,
             opening,
             requirement_focus,
+            "My background directly addresses these requirements:",
         ),
     )
 
 
-def _source_value(payload: Mapping[str, Any], key: str, source: str) -> str:
+def _source_value(
+    payload: Mapping[str, Any],
+    key: str,
+    source: str,
+    *,
+    minimum_words: int = 1,
+) -> str:
     value = str(payload.get(key, "")).strip()
-    if not value or _normalized_source(value) not in _normalized_source(source):
+    if (
+        not value
+        or len(value.split()) < minimum_words
+        or normalize_cv_text(value) not in normalize_cv_text(source)
+    ):
         raise ValueError(f"{key} must copy canonical CV text")
     return value
 
@@ -508,13 +542,16 @@ def _source_values(
     *,
     minimum: int,
     maximum: int,
+    minimum_words: int = 1,
 ) -> tuple[str, ...]:
     raw = payload.get(key)
     if not isinstance(raw, list) or not minimum <= len(raw) <= maximum:
         raise ValueError(f"{key} must contain {minimum} to {maximum} items")
     values = tuple(str(item).strip() for item in raw)
     if any(
-        not value or _normalized_source(value) not in _normalized_source(source)
+        not value
+        or len(value.split()) < minimum_words
+        or normalize_cv_text(value) not in normalize_cv_text(source)
         for value in values
     ):
         raise ValueError(f"{key} must copy canonical CV text")
@@ -527,6 +564,7 @@ def _source_entries(
     source: str,
     *,
     required: tuple[str, ...],
+    header_order: tuple[str, ...],
     list_fields: tuple[str, ...],
     minimum: int,
     maximum: int,
@@ -538,25 +576,58 @@ def _source_entries(
     for item in raw:
         if not isinstance(item, Mapping):
             raise ValueError(f"{key} entries must be objects")
+        source_block = _source_value(item, "source_block", source, minimum_words=6)
         parsed = {name: _source_value(item, name, source) for name in required}
+        block_lines = tuple(
+            line.strip()
+            for line in source_block.splitlines()
+            if line.strip()
+        )
+        if not _entry_header_matches(block_lines, parsed, header_order):
+            raise ValueError(f"{key} source_block does not bind one source entry")
         for name in list_fields:
             parsed[name] = _source_values(
-                item, name, source, minimum=1, maximum=4
+                item,
+                name,
+                source_block,
+                minimum=1,
+                maximum=4,
+                minimum_words=4,
             )
+        parsed["source_block"] = source_block
         entries.append(parsed)
     return tuple(entries)
 
 
-def _normalized_source(value: str) -> str:
-    normalized = unicodedata.normalize("NFKC", str(value))
-    normalized = re.sub(r"[‐‑‒–—−]", "-", normalized)
-    normalized = re.sub(r"-\s+", "-", normalized)
-    return " ".join(normalized.split()).casefold()
+def _entry_header_matches(
+    lines: tuple[str, ...],
+    fields: Mapping[str, str],
+    header_order: tuple[str, ...],
+) -> bool:
+    """Bind two source header pairs without allowing cross-entry field mixing."""
 
-
-def _canonical_evidence_id(statement: str, kind: EvidenceKind) -> str:
-    encoded = f"{kind.value}\0{_normalized_source(statement)}".encode("utf-8")
-    return f"canonical-cv:{hashlib.sha256(encoded).hexdigest()}"
+    if len(header_order) != 4:
+        return False
+    cursor = 0
+    for left_name, right_name in (
+        header_order[:2],
+        header_order[2:],
+    ):
+        if cursor >= len(lines):
+            return False
+        line = normalize_cv_text(lines[cursor])
+        left = normalize_cv_text(fields[left_name])
+        right = normalize_cv_text(fields[right_name])
+        if not line.startswith(left):
+            return False
+        if right in line[len(left) :]:
+            cursor += 1
+            continue
+        cursor += 1
+        if cursor >= len(lines) or normalize_cv_text(lines[cursor]) != right:
+            return False
+        cursor += 1
+    return True
 
 
 __all__ = [
@@ -576,12 +647,18 @@ Every returned professional field except selected_evidence_ids,
 target_requirement_ids, and target_role must be copied verbatim from
 canonical_cv_text. Select concise source excerpts;
 never invent, paraphrase, improve, or merge facts. Select only approved evidence
-identifiers. The application code, not you, assembles and audits the final prose.
+identifiers. Select each experience and education item as one contiguous
+source_block beginning with role/degree plus dates, followed by
+organization/institution plus location; paired fields may share a line. The
+selected bullet strings omit only their leading bullet glyph and otherwise
+copy the complete bullet text from that block. The
+application code, not you, assembles and audits the final prose.
 Prefer a complete one-to-two-page ATS-friendly CV with contact details, a focused
 summary, recent relevant experience, education, technical skills, and at most
 three relevant publications. The cover letter must name the exact target role,
-ground its narrative in one to three persisted requirements, and use two to
-three relevant first-person source paragraphs. Preserve every metric's scope.
+ground its narrative in one to three persisted requirements, and use one to
+two substantial source paragraphs, at least one in first person. Preserve every
+metric's scope.
 """
 
 _STANDARD_STRUCTURAL_LINES = (
@@ -614,6 +691,7 @@ _STANDARD_STRUCTURAL_LINES = (
 _EXPERIENCE_SCHEMA = {
     "type": "object",
     "properties": {
+        "source_block": {"type": "string", "minLength": 1},
         "role": {"type": "string"},
         "organization": {"type": "string"},
         "location": {"type": "string"},
@@ -625,19 +703,27 @@ _EXPERIENCE_SCHEMA = {
             "maxItems": 4,
         },
     },
-    "required": ["role", "organization", "location", "dates", "bullets"],
+    "required": [
+        "source_block",
+        "role",
+        "organization",
+        "location",
+        "dates",
+        "bullets",
+    ],
     "additionalProperties": False,
 }
 
 _EDUCATION_SCHEMA = {
     "type": "object",
     "properties": {
+        "source_block": {"type": "string", "minLength": 1},
         "degree": {"type": "string"},
         "institution": {"type": "string"},
         "location": {"type": "string"},
         "dates": {"type": "string"},
     },
-    "required": ["degree", "institution", "location", "dates"],
+    "required": ["source_block", "degree", "institution", "location", "dates"],
     "additionalProperties": False,
 }
 
@@ -672,6 +758,7 @@ _ARTIFACT_SCHEMA = {
         "selected_publications": {
             "type": "array",
             "items": {"type": "string"},
+            "minItems": 1,
             "maxItems": 3,
         },
         "selected_evidence_ids": {
@@ -689,8 +776,8 @@ _ARTIFACT_SCHEMA = {
         "cover_letter_source_paragraphs": {
             "type": "array",
             "items": {"type": "string"},
-            "minItems": 2,
-            "maxItems": 3,
+            "minItems": 1,
+            "maxItems": 2,
         },
     },
     "required": [
