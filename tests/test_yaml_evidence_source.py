@@ -186,6 +186,21 @@ def test_structured_projection_drops_every_unallowlisted_layout_block():
     assert "private personal narrative" not in projected.casefold()
 
 
+def test_header_contact_is_kept_when_pdf_layout_places_it_in_its_own_block():
+    projected = _professional_cv_projection(
+        (
+            "Synthetic Candidate",
+            "Applied AI Researcher",
+            "synthetic93@example.com | +39 371 198 8078 | example.com/profile",
+            "Professional Profile\nI build trustworthy machine-learning systems.",
+        )
+    )
+
+    assert "synthetic93@example.com" in projected
+    assert "+39 371 198 8078" in projected
+    assert "example.com/profile" in projected
+
+
 def test_single_layout_block_does_not_fall_back_to_permissive_projection():
     projected = _professional_cv_projection(
         (

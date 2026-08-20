@@ -226,7 +226,7 @@ def _project_structured_blocks(blocks: tuple[str, ...]) -> str:
                 line
                 for index, line in enumerate(lines)
                 if (index == 0 and _safe_identity_line(line))
-                or (index > 0 and _safe_header_projection_line(line))
+                or _safe_header_projection_line(line)
             )
             if safe:
                 result.append("\n".join(safe))
