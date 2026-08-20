@@ -602,6 +602,7 @@ def _source_entries(
                 item,
                 name=name,
                 lines=block_lines[header_length:],
+                source=source,
             )
         if not list_fields and len(block_lines) != header_length:
             raise ValueError(f"{key} source_block must contain only one entry header")
@@ -645,6 +646,7 @@ def _validated_entry_bullets(
     *,
     name: str,
     lines: tuple[str, ...],
+    source: str,
 ) -> tuple[str, ...]:
     raw = payload.get(name)
     if not isinstance(raw, list) or not raw:
@@ -664,19 +666,54 @@ def _validated_entry_bullets(
         current.append(line)
     if current:
         source_bullets.append(" ".join(current).strip())
-    if not source_bullets or any(
-        not bullet or not re.search(r"[.!?]$", bullet)
-        for bullet in source_bullets
-    ):
+    if not source_bullets or any(not bullet for bullet in source_bullets):
         raise ValueError("experience source_block requires complete bullets")
     selected = tuple(str(item).strip() for item in raw[:4])
-    available = {normalize_cv_text(item): item for item in source_bullets}
+    local = {_bullet_comparison_key(item): item for item in source_bullets}
+    authoritative = {
+        _bullet_comparison_key(item): item for item in _canonical_source_bullets(source)
+    }
     if any(
-        len(item.split()) < 4 or normalize_cv_text(item) not in available
+        len(item.split()) < 4
+        or _bullet_comparison_key(item) not in local
+        or _bullet_comparison_key(item) not in authoritative
         for item in selected
     ):
         raise ValueError(f"{name} must copy complete bullets from one source entry")
-    return selected
+    return tuple(authoritative[_bullet_comparison_key(item)] for item in selected)
+
+
+def _canonical_source_bullets(source: str) -> tuple[str, ...]:
+    """Read complete bullet groups from authoritative layout boundaries."""
+
+    result: list[str] = []
+    current: list[str] = []
+    for raw_line in source.splitlines():
+        line = raw_line.strip()
+        if line.startswith("•"):
+            if current:
+                result.append(" ".join(current).strip())
+            current = [line.lstrip("•").strip()]
+            if re.search(r"[.!?;:]$", current[-1]):
+                result.append(" ".join(current).strip())
+                current = []
+            continue
+        if current and not line:
+            result.append(" ".join(current).strip())
+            current = []
+            continue
+        if current:
+            current.append(line)
+            if re.search(r"[.!?;:]$", current[-1]):
+                result.append(" ".join(current).strip())
+                current = []
+    if current:
+        result.append(" ".join(current).strip())
+    return tuple(item for item in result if item)
+
+
+def _bullet_comparison_key(value: str) -> str:
+    return normalize_cv_text(value).rstrip(".!?;:")
 
 
 def _minimum_field_words(name: str) -> int:

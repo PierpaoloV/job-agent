@@ -321,6 +321,38 @@ def test_application_code_caps_model_selected_role_bullets_at_four():
     assert bullets[4] not in generated.cv_text
 
 
+def test_application_code_restores_authoritative_bullet_terminal_punctuation():
+    selection = professional_selection()
+    selection["experience"][0] = {
+        **selection["experience"][0],
+        "source_block": selection["experience"][0]["source_block"].removesuffix("."),
+        "bullets": ["Built reproducible research systems"],
+    }
+
+    generated = StructuredArtifactGenerator(
+        RecordingProvider(selection), candidate_name="Synthetic Candidate"
+    ).generate(tailoring_request())
+
+    assert "- Built reproducible research systems." in generated.cv_text
+
+
+def test_application_code_rejects_a_truncated_source_bullet():
+    selection = professional_selection()
+    selection["experience"][0] = {
+        **selection["experience"][0],
+        "source_block": selection["experience"][0]["source_block"].replace(
+            "• Built reproducible research systems.",
+            "• Built reproducible research",
+        ),
+        "bullets": ["Built reproducible research"],
+    }
+
+    with pytest.raises(ValueError, match="complete bullets"):
+        StructuredArtifactGenerator(
+            RecordingProvider(selection), candidate_name="Synthetic Candidate"
+        ).generate(tailoring_request())
+
+
 def test_uses_one_sonnet_structured_output_request_for_the_whole_bundle():
     model_payload = {
         "headline": "Applied AI Researcher",
