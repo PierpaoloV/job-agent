@@ -211,13 +211,19 @@ def _project_structured_blocks(blocks: tuple[str, ...]) -> str:
         if first in _SAFE_SECTION_HEADINGS or first in _BLOCKED_SECTION_HEADINGS:
             if first in _MODEL_SECTION_HEADINGS:
                 section = first
-                expect = "entry_header" if first in {
-                    "professional experience",
-                    "education",
-                } else ""
                 publication_phase = 0
                 pending_header = None
-                result.append("\n".join(lines))
+                if first in {"professional experience", "education"}:
+                    result.append(lines[0])
+                    embedded_header = lines[1:]
+                    if embedded_header and _entry_header_block(embedded_header):
+                        pending_header = "\n".join(embedded_header)
+                        expect = "entry_detail"
+                    else:
+                        expect = "entry_header"
+                else:
+                    expect = ""
+                    result.append("\n".join(lines))
             else:
                 section = "blocked"
             continue

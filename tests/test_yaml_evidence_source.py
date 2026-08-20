@@ -201,6 +201,22 @@ def test_header_contact_is_kept_when_pdf_layout_places_it_in_its_own_block():
     assert "example.com/profile" in projected
 
 
+def test_section_heading_block_can_also_contain_the_first_education_header():
+    projected = _professional_cv_projection(
+        (
+            "Synthetic Candidate",
+            "Education\nPhD in Artificial Intelligence\n2018 - 2022",
+            "Example University\nAmsterdam\n• Defended a source-verified dissertation.",
+            "Peer-Reviewed Publications and Proceedings",
+        )
+    )
+
+    assert "Education" in projected
+    assert "PhD in Artificial Intelligence" in projected
+    assert "Example University" in projected
+    assert "Amsterdam" in projected
+
+
 def test_single_layout_block_does_not_fall_back_to_permissive_projection():
     projected = _professional_cv_projection(
         (
