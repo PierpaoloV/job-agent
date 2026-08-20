@@ -336,6 +336,27 @@ def test_application_code_restores_authoritative_bullet_terminal_punctuation():
     assert "- Built reproducible research systems." in generated.cv_text
 
 
+def test_application_code_binds_separate_model_bullets_to_header_only_source_block():
+    selection = professional_selection()
+    selection["experience"][0] = {
+        **selection["experience"][0],
+        "source_block": "\n".join(
+            (
+                "Machine Learning Researcher",
+                "2022 - Present",
+                "Example Institute",
+                "Amsterdam",
+            )
+        ),
+    }
+
+    generated = StructuredArtifactGenerator(
+        RecordingProvider(selection), candidate_name="Synthetic Candidate"
+    ).generate(tailoring_request())
+
+    assert "- Built reproducible research systems." in generated.cv_text
+
+
 def test_application_code_rejects_a_truncated_source_bullet():
     selection = professional_selection()
     selection["experience"][0] = {

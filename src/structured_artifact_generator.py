@@ -603,6 +603,7 @@ def _source_entries(
                 name=name,
                 lines=block_lines[header_length:],
                 source=source,
+                entry_fields=parsed,
             )
         if not list_fields and len(block_lines) != header_length:
             raise ValueError(f"{key} source_block must contain only one entry header")
@@ -647,6 +648,7 @@ def _validated_entry_bullets(
     name: str,
     lines: tuple[str, ...],
     source: str,
+    entry_fields: Mapping[str, str],
 ) -> tuple[str, ...]:
     raw = payload.get(name)
     if not isinstance(raw, list) or not raw:
@@ -666,16 +668,19 @@ def _validated_entry_bullets(
         current.append(line)
     if current:
         source_bullets.append(" ".join(current).strip())
-    if not source_bullets or any(not bullet for bullet in source_bullets):
+    if lines and (not source_bullets or any(not bullet for bullet in source_bullets)):
         raise ValueError("experience source_block requires complete bullets")
     selected = tuple(str(item).strip() for item in raw[:4])
     local = {_bullet_comparison_key(item): item for item in source_bullets}
     authoritative = {
-        _bullet_comparison_key(item): item for item in _canonical_source_bullets(source)
+        _bullet_comparison_key(item): item
+        for item in _canonical_entry_bullets(source, entry_fields)
     }
+    if not authoritative:
+        raise ValueError("experience source entry requires authoritative bullets")
     if any(
         len(item.split()) < 4
-        or _bullet_comparison_key(item) not in local
+        or (local and _bullet_comparison_key(item) not in local)
         or _bullet_comparison_key(item) not in authoritative
         for item in selected
     ):
@@ -707,6 +712,64 @@ def _canonical_source_bullets(source: str) -> tuple[str, ...]:
             if re.search(r"[.!?;:]$", current[-1]):
                 result.append(" ".join(current).strip())
                 current = []
+    if current:
+        result.append(" ".join(current).strip())
+    return tuple(item for item in result if item)
+
+
+def _canonical_entry_bullets(
+    source: str, fields: Mapping[str, str]
+) -> tuple[str, ...]:
+    """Bind bullets to one canonical role/date and organization/location pair."""
+
+    raw_lines = source.splitlines()
+    indexed = tuple(
+        (index, line.strip())
+        for index, line in enumerate(raw_lines)
+        if line.strip()
+    )
+    for start in range(len(indexed)):
+        for width in range(2, 5):
+            candidate = tuple(line for _, line in indexed[start : start + width])
+            if len(candidate) != width or _entry_header_length(
+                candidate,
+                fields,
+                ("role", "dates", "organization", "location"),
+            ) != width:
+                continue
+            end_index = indexed[start + width - 1][0]
+            return _bullets_immediately_after_header(raw_lines[end_index + 1 :])
+    return ()
+
+
+def _bullets_immediately_after_header(lines: list[str]) -> tuple[str, ...]:
+    result: list[str] = []
+    current: list[str] = []
+    started = False
+    for raw_line in lines:
+        line = raw_line.strip()
+        if line.startswith("•"):
+            if current:
+                result.append(" ".join(current).strip())
+            current = [line.lstrip("•").strip()]
+            started = True
+            if re.search(r"[.!?;:]$", current[-1]):
+                result.append(" ".join(current).strip())
+                current = []
+            continue
+        if current:
+            if not line:
+                return ()
+            current.append(line)
+            if re.search(r"[.!?;:]$", current[-1]):
+                result.append(" ".join(current).strip())
+                current = []
+            continue
+        if started or not line:
+            if started:
+                break
+            continue
+        return ()
     if current:
         result.append(" ".join(current).strip())
     return tuple(item for item in result if item)
