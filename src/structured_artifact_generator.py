@@ -278,14 +278,8 @@ def _build_professional_documents(
 
     headline = _source_value(payload, "headline", source, minimum_words=2)
     contacts = _canonical_contacts(source)
-    summary = _source_values(
-        payload,
-        "summary",
-        source,
-        minimum=1,
-        maximum=3,
-        minimum_words=8,
-    )
+    profile = _canonical_professional_profile(source)
+    summary = (profile,)
     experience = _source_entries(
         payload,
         "experience",
@@ -314,15 +308,8 @@ def _build_professional_documents(
         maximum=3,
         minimum_words=6,
     )
-    cover_source = _source_values(
-        payload,
-        "cover_letter_source_paragraphs",
-        source,
-        minimum=1,
-        maximum=2,
-        minimum_words=10,
-    )
-    if not any(re.search(r"\b(?:I|my|me)\b", item, re.IGNORECASE) for item in cover_source):
+    cover_source = (profile,)
+    if not re.search(r"\b(?:I|my|me)\b", profile, re.IGNORECASE):
         raise ValueError("cover letter requires a first-person canonical CV paragraph")
     target_role = str(payload.get("target_role", "")).strip()
     if not _valid_target_role(target_role, request.official_vacancy.description):
@@ -546,6 +533,34 @@ def _source_value(
     ):
         raise ValueError(f"{key} must copy canonical CV text")
     return value
+
+
+def _canonical_professional_profile(source: str) -> str:
+    """Return the complete authoritative profile rather than model-copied prose."""
+
+    lines = tuple(line.strip() for line in source.splitlines())
+    start = next(
+        (
+            index + 1
+            for index, line in enumerate(lines)
+            if line.casefold() == "professional profile"
+        ),
+        None,
+    )
+    if start is None:
+        raise ValueError("professional CV requires a Professional Profile section")
+    end = next(
+        (
+            index
+            for index in range(start, len(lines))
+            if lines[index].casefold() == "professional experience"
+        ),
+        len(lines),
+    )
+    profile = " ".join(line for line in lines[start:end] if line).strip()
+    if len(profile.split()) < 10:
+        raise ValueError("professional CV requires a substantial profile")
+    return profile
 
 
 def _source_values(

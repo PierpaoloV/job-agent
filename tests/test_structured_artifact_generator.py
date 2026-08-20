@@ -442,10 +442,11 @@ def test_uses_one_sonnet_structured_output_request_for_the_whole_bundle():
 
     source = "\n".join(
         (
-            "Synthetic Candidate",
-            "Applied AI Researcher",
-            "synthetic@example.com",
-            "Applied AI researcher building trustworthy machine-\nlearning systems for clinical computer vision.",
+                "Synthetic Candidate",
+                "Applied AI Researcher",
+                "synthetic@example.com",
+                "Professional Profile",
+                "Applied AI researcher building trustworthy machine-\nlearning systems for clinical computer vision.",
             "I validate machine-learning systems against real operational requirements and independent evaluation datasets.",
             "Professional Experience",
             "Machine Learning Researcher",
@@ -726,7 +727,7 @@ def test_structured_generation_rejects_abbreviated_role_metadata_and_target():
         ).generate(tailoring_request())
 
 
-def test_structured_generation_requires_publication_and_first_person_letter_source():
+def test_structured_generation_requires_publication_and_canonical_first_person_profile():
     generator = lambda payload: StructuredArtifactGenerator(  # noqa: E731
         RecordingProvider(payload),
         candidate_name="Synthetic Candidate",
@@ -736,14 +737,27 @@ def test_structured_generation_requires_publication_and_first_person_letter_sour
         generator(professional_selection(selected_publications=[])).generate(
             tailoring_request()
         )
+    generated = generator(
+        professional_selection(
+            summary=["Invented model summary that must be ignored."],
+            cover_letter_source_paragraphs=[
+                "Invented model paragraph that must be ignored."
+            ],
+        )
+    ).generate(tailoring_request())
+    assert "Invented model" not in generated.cv_text
+    assert "Invented model" not in generated.cover_letter_text
+    assert "I validate machine-learning systems" in generated.cover_letter_text
+
+    without_first_person = professional_source().replace(
+        "I validate machine-learning systems against real operational requirements and independent\n"
+        "evaluation datasets.\n",
+        "",
+    )
     with pytest.raises(ValueError, match="first-person"):
-        generator(
-            professional_selection(
-                cover_letter_source_paragraphs=[
-                    "Applied AI researcher building reproducible machine-learning systems for clinical computer vision."
-                ]
-            )
-        ).generate(tailoring_request())
+        generator(professional_selection()).generate(
+            replace(tailoring_request(), canonical_cv_text=without_first_person)
+        )
 
 
 def test_deterministic_audit_rejects_untraced_professional_text():
@@ -990,7 +1004,8 @@ def test_production_bundle_preserves_complete_master_cv_identity_and_structure(
     assert "EDUCATION" in cv_text
     assert "PhD in Artificial Intelligence" in cv_text
     assert "TECHNICAL SKILLS" in cv_text
-    assert "I validate machine-learning systems" in letter_text
+    assert "I validate" in letter_text
+    assert "operational requirements" in letter_text
     assert "Uses Python to build reproducible" in letter_text
     assert len(PdfReader(artifacts.cv_path).pages) <= 2
     traced = {claim.statement for claim in artifacts.claims}
