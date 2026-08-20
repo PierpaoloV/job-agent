@@ -776,10 +776,21 @@ def _valid_target_role(value: str, vacancy: str) -> bool:
     if (
         len(value.split()) < 2
         or len(value) < 8
-        or normalized not in normalize_cv_text(vacancy)
+        or not _ROLE_NOUN.search(value)
     ):
         return False
-    return bool(_ROLE_NOUN.search(value))
+    normalized_vacancy = normalize_cv_text(vacancy)
+    if normalized in normalized_vacancy:
+        return True
+    vacancy_tokens = set(re.findall(r"[a-z0-9]+", normalized_vacancy))
+    context_tokens = tuple(
+        token
+        for token in re.findall(r"[a-z0-9]+", normalized)
+        if not _ROLE_NOUN.fullmatch(token)
+    )
+    return bool(context_tokens) and all(
+        token in vacancy_tokens for token in context_tokens
+    )
 
 
 def _canonical_contacts(source: str) -> tuple[str, ...]:

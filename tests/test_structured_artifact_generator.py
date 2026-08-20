@@ -660,6 +660,22 @@ def test_structured_generation_rejects_abbreviated_role_metadata_and_target():
             candidate_name="Synthetic Candidate",
         ).generate(tailoring_request())
 
+    inferred_title = StructuredArtifactGenerator(
+        RecordingProvider(
+            professional_selection(target_role="AI Research Scientist (Paris)")
+        ),
+        candidate_name="Synthetic Candidate",
+    ).generate(
+        replace(
+            tailoring_request(),
+            official_vacancy=replace(
+                tailoring_request().official_vacancy,
+                description="Build advanced AI research systems in Paris.",
+            ),
+        )
+    )
+    assert "AI Research Scientist (Paris)" in inferred_title.cover_letter_text
+
     with pytest.raises(ValueError, match="target_role"):
         StructuredArtifactGenerator(
             RecordingProvider(
@@ -671,7 +687,7 @@ def test_structured_generation_rejects_abbreviated_role_metadata_and_target():
                 tailoring_request(),
                 official_vacancy=replace(
                     tailoring_request().official_vacancy,
-                    description="Build trustworthy research systems.",
+                    description="Build trustworthy production systems.",
                 ),
             )
         )
