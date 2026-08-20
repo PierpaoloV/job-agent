@@ -12,6 +12,14 @@ always-on Mac. A trusted local consumer remains optional: it can download,
 decrypt, and verify a bound package before enabling the non-hosted `Compila`
 gate.
 
+The generation contract sends the professional text extracted from the
+candidate-owned canonical CV together with the approved evidence bank. Sonnet
+selects, but may not invent or paraphrase, contact details, profile excerpts,
+one to three relevant roles, education, and optional publications. The runtime
+validates every selected excerpt against the master source, requires an email,
+experience, education, summary, and approved tailored evidence, then renders a
+styled ATS-readable document capped at two pages.
+
 ## Safety invariants
 
 - No health, demographic, identity-document, credential, or ATS-answer data

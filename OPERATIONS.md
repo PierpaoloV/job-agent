@@ -98,8 +98,11 @@ The GitHub token needs Actions read and Contents write for this repository;
 GitHub requires Contents write for repository dispatch.
 
 The hosted job retrieves the canonical CV from the public `example-org/cv`
-release. Publishing a new master CV and updating `JOB_AGENT_EVIDENCE_YAML`
-must be treated as one source-version update before preparing another role.
+release. Its extractable professional text is the authoritative source for
+contact details, role metadata, education, and other CV structure selected by
+Sonnet; the private evidence YAML remains the authority for tailored claims.
+Publishing a new master CV and updating `JOB_AGENT_EVIDENCE_YAML` must be
+treated as one source-version update before preparing another role.
 
 The CLI deliberately reports `disabled: application_coordinator_missing` until
 production supplies real vacancy and ATS/browser adapters. Once those are
@@ -123,7 +126,8 @@ run IDs in the configured workflow/branch/event scope, persists a dispatching
 marker, and sends only the application ID plus exact official vacancy version.
 The callback returns immediately while Actions restores the matching
 preparation snapshot, makes one Sonnet generation call, audits and renders both
-documents, encrypts them, and uploads only `application-artifacts.enc` for
+documents, rejects incomplete or non-source-bound selections, encrypts them,
+and uploads only `application-artifacts.enc` for
 three days. Later worker cycles bind exactly one new workflow run and download
 only its artifact. The Mac verifies authenticated authority, identity,
 manifest, PDF hashes, owner and permissions before exposing `Compila` and

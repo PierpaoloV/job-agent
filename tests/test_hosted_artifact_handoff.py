@@ -12,6 +12,7 @@ from types import SimpleNamespace
 import zipfile
 
 import pytest
+from reportlab.pdfgen.canvas import Canvas
 import requests
 import yaml
 
@@ -441,7 +442,9 @@ def test_hosted_preparation_uses_authoritative_input_and_exports_one_package(
         encoding="utf-8",
     )
     canonical_cv = tmp_path / "curriculum_vitae.pdf"
-    canonical_cv.write_bytes(b"%PDF- canonical")
+    canvas = Canvas(str(canonical_cv))
+    canvas.drawString(50, 800, "Synthetic Candidate canonical CV")
+    canvas.save()
     vacancy_version = identity().official_vacancy_version
     store = HostedPreparationInputStore(tmp_path / "authoritative-inputs")
     store.save(

@@ -150,8 +150,10 @@ The inputs have deliberately different purposes:
   generate the CV and cover letter. Every claim must be true and traceable to
   the canonical CV or another named source.
 - `preferences.yaml` controls deterministic screening and ranking preferences.
-- the canonical CV PDF is used as the source-version anchor. The current hosted
-  transport expects its configured URL to be directly downloadable over HTTPS.
+- the canonical CV PDF is both the source-version anchor and the authoritative
+  professional source for contact details, profile, role metadata, education,
+  and publications. Its text must be extractable. The hosted transport expects
+  its configured URL to be directly downloadable over HTTPS.
 
 The installer rejects inline secret fields. Export secrets into the variable
 names referenced by `hosted-config.yaml`:
@@ -388,8 +390,9 @@ Telegram callback/reply
 
 Approved preparation
   -> private evidence + canonical CV on an ephemeral Actions runner
-  -> Anthropic structured CV/cover-letter generation
-  -> deterministic claim audit and PDF rendering
+  -> Anthropic source-bound selection for a complete one-to-two-page CV
+  -> deterministic source, claim, completeness, and page-limit audit
+  -> ATS-readable styled PDF rendering
   -> encrypted GitHub artifact
   -> authoritative `CV pronto` state bound to the package SHA-256
   -> protected CV + cover-letter PDFs and one-use review controls on Telegram
@@ -403,7 +406,7 @@ Approved preparation
 | Gmail | Job-alert emails and account identity | Source mailbox; read-only access |
 | GitHub Actions runner | Email bodies, OAuth files, profile, preferences, evidence, CV, vacancy data | Ephemeral runner; plaintext candidate material is removed in cleanup |
 | OpenAI | Alert lead, public vacancy-resolution prompt, sanitized grading profile | Responses request uses `store: false`; provider policy still applies |
-| Anthropic | Verified vacancy, requirement matrix, and approved evidence statements | Used only after explicit preparation approval |
+| Anthropic | Verified vacancy, requirement matrix, approved evidence statements, and professional text extracted from the canonical CV | Used only after explicit preparation approval; returned facts must copy the approved sources |
 | Telegram | Ranked public job summaries, protected review PDFs, links, status messages, and the user's discard reason | Review PDFs use `protect_content` and are deleted on decision or by the 24-hour cloud sweep; Telegram is not a true view-once PDF channel |
 | Cloudflare Worker/D1 | Opaque callback capabilities, protected-message receipts, actor/chat scope, update IDs, action state, discard reason | Durable idempotency, one-use approval, and expiry reconciliation ledger |
 | GitHub Actions artifacts | Public vacancy/grade state; encrypted application package | Current workflows use 14-day state retention and 3-day package retention |

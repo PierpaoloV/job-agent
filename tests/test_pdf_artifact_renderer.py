@@ -3,6 +3,7 @@ import pathlib
 import sys
 
 import pytest
+from pypdf import PdfReader
 
 
 REPO_ROOT = pathlib.Path(__file__).resolve().parents[1]
@@ -44,6 +45,42 @@ def test_renderer_writes_and_atomically_publishes_real_pdf_bundle(tmp_path):
     assert oct(cv.stat().st_mode & 0o777) == "0o600"
     assert oct(cv.parent.stat().st_mode & 0o777) == "0o700"
     assert oct((tmp_path / "artifacts").stat().st_mode & 0o777) == "0o700"
+
+
+def test_renderer_turns_document_structure_into_clean_ats_text(tmp_path):
+    renderer = LocalPdfArtifactRenderer(tmp_path / "artifacts")
+
+    rendered = renderer.render(
+        application_id="synthetic-001",
+        bundle_version="generation-v1",
+        cv_text=(
+            "# Synthetic Candidate\n"
+            "Applied AI Researcher\n"
+            "synthetic@example.com\n\n"
+            "## PROFESSIONAL EXPERIENCE\n"
+            "### Machine Learning Researcher\n"
+            "Example Institute\n"
+            "Amsterdam\n"
+            "2022 - Present\n"
+            "- Built reproducible research systems.\n\n"
+            "## EDUCATION\n"
+            "### PhD in Artificial Intelligence\n"
+            "Example University\n"
+            "2018 - 2022"
+        ),
+        cover_letter_text=(
+            "Dear Hiring Team,\n\n"
+            "Please accept my application for this position.\n\n"
+            "Sincerely,\nSynthetic Candidate"
+        ),
+    )
+
+    cv_reader = PdfReader(rendered.cv_path)
+    cv_text = "\n".join(page.extract_text() or "" for page in cv_reader.pages)
+    assert "#" not in cv_text
+    assert "- Built reproducible research systems." in cv_text
+    assert "PROFESSIONAL EXPERIENCE" in cv_text
+    assert len(cv_reader.pages) == 1
 
 
 def test_publish_is_idempotent_but_rejects_conflicting_existing_bundle(tmp_path):

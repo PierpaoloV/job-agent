@@ -54,6 +54,7 @@ class EvidenceBankSnapshot:
     version: str
     canonical_cv_version: str
     evidence: tuple[EvidenceRecord, ...]
+    canonical_cv_text: str = ""
 
 
 @dataclass(frozen=True)
@@ -77,6 +78,7 @@ class GeneratedArtifactBundle:
     cv_text: str
     cover_letter_text: str
     claims: tuple[MaterialClaim, ...]
+    trusted_source_text: str = ""
 
 
 @dataclass(frozen=True)
@@ -106,6 +108,7 @@ class TailoringRequest:
     canonical_cv_version: str
     evidence: tuple[EvidenceRecord, ...]
     stretch_decision: StretchDecision
+    canonical_cv_text: str = ""
 
 
 class ReadOnlyEvidenceSource(Protocol):
@@ -215,6 +218,7 @@ class TruthfulApplicationArtifactService:
             canonical_cv_version=snapshot.canonical_cv_version,
             evidence=evidence,
             stretch_decision=stretch,
+            canonical_cv_text=snapshot.canonical_cv_text,
         )
         generated = self._generator.generate(request)
         audit = self._claim_auditor.audit(generated, evidence)

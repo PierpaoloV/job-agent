@@ -9,3 +9,4 @@ cryptography>=46,<47
 pytest>=8.0
 publicsuffixlist==1.0.2.20260625
 reportlab>=4.2,<5
+pypdf>=6.0,<7

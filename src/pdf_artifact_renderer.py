@@ -3,13 +3,20 @@
 from __future__ import annotations
 
 import hashlib
+from html import escape
 import os
 from pathlib import Path
 import re
 import shutil
 import tempfile
+import unicodedata
 
+from pypdf import PdfReader
+from reportlab.lib import colors
 from reportlab.lib.pagesizes import A4
+from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
+from reportlab.lib.units import mm
+from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer
 from reportlab.pdfgen.canvas import Canvas
 
 from application_artifacts import RenderedArtifactBundle
@@ -41,8 +48,8 @@ class LocalPdfArtifactRenderer:
         _private_directory(destination)
         cv = destination / "cv.pdf"
         cover_letter = destination / "cover-letter.pdf"
-        _write_pdf(cv, cv_text)
-        _write_pdf(cover_letter, cover_letter_text)
+        _write_pdf(cv, cv_text, max_pages=2)
+        _write_pdf(cover_letter, cover_letter_text, max_pages=2)
         return RenderedArtifactBundle(
             cv_path=str(cv),
             cover_letter_path=str(cover_letter),
@@ -120,43 +127,211 @@ def _safe_component(value: str) -> str:
     return candidate
 
 
-def _write_pdf(path: Path, text: str) -> None:
+def _write_pdf(path: Path, text: str, *, max_pages: int) -> None:
     temporary = path.with_suffix(".tmp")
-    canvas = Canvas(str(temporary), pagesize=A4, invariant=1, pageCompression=1)
-    width, height = A4
-    margin = 54
-    y = height - margin
-    canvas.setFont("Helvetica", 10)
-    for paragraph in str(text).splitlines() or [""]:
-        for line in _wrap(paragraph, 92) or [""]:
-            if y < margin:
-                canvas.showPage()
-                canvas.setFont("Helvetica", 10)
-                y = height - margin
-            canvas.drawString(margin, y, line)
-            y -= 14
-        y -= 4
-    canvas.save()
+    document = SimpleDocTemplate(
+        str(temporary),
+        pagesize=A4,
+        leftMargin=18 * mm,
+        rightMargin=18 * mm,
+        topMargin=14 * mm,
+        bottomMargin=14 * mm,
+        title="Application document",
+        author="Candidate",
+    )
+    document.build(
+        _document_story(text),
+        canvasmaker=_invariant_canvas,
+    )
+    if len(PdfReader(temporary).pages) > max_pages:
+        temporary.unlink(missing_ok=True)
+        raise ValueError(f"application document exceeds {max_pages} pages")
     os.chmod(temporary, 0o600)
     os.replace(temporary, path)
     os.chmod(path, 0o600)
     _fsync_file(path)
 
 
-def _wrap(value: str, limit: int) -> tuple[str, ...]:
-    words = value.split()
-    lines: list[str] = []
-    current = ""
-    for word in words:
-        candidate = f"{current} {word}".strip()
-        if current and len(candidate) > limit:
-            lines.append(current)
-            current = word
-        else:
-            current = candidate
-    if current:
-        lines.append(current)
-    return tuple(lines)
+def _document_story(text: str) -> list:
+    styles = _document_styles()
+    story: list = []
+    before_first_section = True
+    header_line = 0
+    lines = str(text).splitlines() or [""]
+    index = 0
+    while index < len(lines):
+        line = _safe_pdf_text(lines[index].strip())
+        index += 1
+        if not line:
+            if header_line:
+                before_first_section = False
+                header_line = 0
+            story.append(Spacer(1, 2.4 * mm))
+            continue
+        if line.startswith("### "):
+            story.append(Paragraph(escape(line[4:]), styles["entry"]))
+            metadata = []
+            while index < len(lines) and len(metadata) < 3:
+                candidate = _safe_pdf_text(lines[index].strip())
+                if not candidate or candidate.startswith(("#", "- ")):
+                    break
+                metadata.append(candidate)
+                index += 1
+            if len(metadata) == 3:
+                story.append(
+                    Paragraph(
+                        " | ".join(escape(item) for item in metadata),
+                        styles["metadata"],
+                    )
+                )
+            else:
+                story.extend(
+                    Paragraph(escape(item), styles["body"])
+                    for item in metadata
+                )
+            continue
+        if line.startswith("## "):
+            before_first_section = False
+            story.append(Paragraph(escape(line[3:]), styles["section"]))
+            continue
+        if line.startswith("# "):
+            story.append(Paragraph(escape(line[2:]), styles["name"]))
+            header_line = 1
+            continue
+        if line.startswith("- "):
+            story.append(
+                Paragraph(
+                    escape(line[2:]),
+                    styles["bullet"],
+                    bulletText="-",
+                )
+            )
+            continue
+        if before_first_section and header_line:
+            style = "headline" if header_line == 1 else "contact"
+            story.append(Paragraph(escape(line), styles[style]))
+            header_line += 1
+            continue
+        story.append(Paragraph(escape(line), styles["body"]))
+    return story
+
+
+def _document_styles() -> dict[str, ParagraphStyle]:
+    base = getSampleStyleSheet()
+    ink = colors.HexColor("#14213D")
+    accent = colors.HexColor("#2B6F77")
+    muted = colors.HexColor("#4B5563")
+    return {
+        "name": ParagraphStyle(
+            "CandidateName",
+            parent=base["Title"],
+            fontName="Helvetica-Bold",
+            fontSize=19,
+            leading=22,
+            textColor=ink,
+            alignment=1,
+            spaceAfter=2,
+        ),
+        "headline": ParagraphStyle(
+            "CandidateHeadline",
+            parent=base["BodyText"],
+            fontName="Helvetica-Bold",
+            fontSize=10.5,
+            leading=13,
+            textColor=accent,
+            alignment=1,
+            spaceAfter=1,
+        ),
+        "contact": ParagraphStyle(
+            "CandidateContact",
+            parent=base["BodyText"],
+            fontSize=8.5,
+            leading=10.5,
+            textColor=muted,
+            alignment=1,
+        ),
+        "section": ParagraphStyle(
+            "CvSection",
+            parent=base["Heading2"],
+            fontName="Helvetica-Bold",
+            fontSize=10,
+            leading=12,
+            textColor=accent,
+            spaceBefore=7,
+            spaceAfter=4,
+            keepWithNext=True,
+            borderWidth=0,
+            borderPadding=0,
+        ),
+        "entry": ParagraphStyle(
+            "CvEntry",
+            parent=base["Heading3"],
+            fontName="Helvetica-Bold",
+            fontSize=9.4,
+            leading=11.5,
+            textColor=ink,
+            spaceBefore=3,
+            spaceAfter=1,
+            keepWithNext=True,
+        ),
+        "body": ParagraphStyle(
+            "CvBody",
+            parent=base["BodyText"],
+            fontName="Helvetica",
+            fontSize=8.7,
+            leading=11.2,
+            textColor=colors.HexColor("#1F2937"),
+            spaceAfter=1.5,
+        ),
+        "metadata": ParagraphStyle(
+            "CvMetadata",
+            parent=base["BodyText"],
+            fontName="Helvetica",
+            fontSize=8.3,
+            leading=10.2,
+            textColor=muted,
+            spaceAfter=2.5,
+            keepWithNext=True,
+        ),
+        "bullet": ParagraphStyle(
+            "CvBullet",
+            parent=base["BodyText"],
+            fontName="Helvetica",
+            fontSize=8.6,
+            leading=11.2,
+            textColor=colors.HexColor("#1F2937"),
+            leftIndent=10,
+            firstLineIndent=-7,
+            bulletIndent=1,
+            spaceAfter=2,
+        ),
+    }
+
+
+def _invariant_canvas(*args, **kwargs):
+    kwargs["invariant"] = 1
+    kwargs["pageCompression"] = 1
+    return Canvas(*args, **kwargs)
+
+
+def _safe_pdf_text(value: str) -> str:
+    normalized = unicodedata.normalize("NFKC", str(value))
+    replacements = {
+        "‐": "-",
+        "‑": "-",
+        "‒": "-",
+        "–": "-",
+        "—": "-",
+        "−": "-",
+        "’": "'",
+        "‘": "'",
+        "“": '"',
+        "”": '"',
+        "\u00ad": "",
+    }
+    for source, target in replacements.items():
+        normalized = normalized.replace(source, target)
+    return normalized
 
 
 def _copy_private(source: Path, destination: Path) -> None:

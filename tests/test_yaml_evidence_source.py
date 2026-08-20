@@ -2,6 +2,7 @@ import pathlib
 import sys
 
 import pytest
+from reportlab.pdfgen.canvas import Canvas
 import yaml
 
 
@@ -12,11 +13,17 @@ from application_domain import ArtifactFamily, EvidenceKind  # noqa: E402
 from yaml_evidence_source import YamlEvidenceSource  # noqa: E402
 
 
+def write_canonical_cv(path):
+    canvas = Canvas(str(path))
+    canvas.drawString(50, 800, "Verified canonical CV text")
+    canvas.save()
+
+
 def test_loads_a_versioned_family_scoped_snapshot_without_exposing_other_profile_data(
     tmp_path,
 ):
     canonical_cv = tmp_path / "curriculum_vitae.pdf"
-    canonical_cv.write_bytes(b"verified canonical CV bytes")
+    write_canonical_cv(canonical_cv)
     evidence_path = tmp_path / "evidence.yaml"
     evidence_path.write_text(
         yaml.safe_dump(
@@ -52,6 +59,7 @@ def test_loads_a_versioned_family_scoped_snapshot_without_exposing_other_profile
 
     assert snapshot.version.startswith("sha256:")
     assert snapshot.canonical_cv_version.startswith("sha256:")
+    assert snapshot.canonical_cv_text == "Verified canonical CV text"
     assert [(item.evidence_id, item.kinds) for item in snapshot.evidence] == [
         ("research-impact", (EvidenceKind.IMPACT,)),
         ("python-skill", (EvidenceKind.SKILL,)),
@@ -66,7 +74,7 @@ def test_loads_a_versioned_family_scoped_snapshot_without_exposing_other_profile
 
 def test_rejects_non_boolean_approval_and_excludes_unapproved_evidence(tmp_path):
     canonical_cv = tmp_path / "curriculum_vitae.pdf"
-    canonical_cv.write_bytes(b"verified canonical CV bytes")
+    write_canonical_cv(canonical_cv)
     evidence_path = tmp_path / "evidence.yaml"
     evidence_path.write_text(
         yaml.safe_dump(

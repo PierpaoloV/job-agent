@@ -1,6 +1,9 @@
 import pathlib
 import sys
+from dataclasses import replace
 
+from pypdf import PdfReader
+from reportlab.pdfgen.canvas import Canvas
 import yaml
 
 
@@ -143,26 +146,16 @@ def test_generates_both_documents_and_exact_claim_traces_in_one_provider_call():
     assert request["requirements_evidence_matrix"]["rows"][0]["evidence_ids"] == [
         "python-research"
     ]
-    assert request["contract"]["allowed_untraced_lines"] == [
-        "CURRICULUM VITAE",
+    allowed = set(request["contract"]["allowed_untraced_lines"])
+    assert {
         "PROFESSIONAL SUMMARY",
-        "SELECTED EXPERIENCE",
-        "EXPERIENCE",
-        "SELECTED IMPACT",
-        "SKILLS",
+        "PROFESSIONAL EXPERIENCE",
+        "TECHNICAL SKILLS",
         "EDUCATION",
         "SELECTED PUBLICATIONS",
-        "PUBLICATIONS",
-            "PROJECTS",
-            "Dear Hiring Team,",
-            "Please accept my application for this position.",
-            (
-                "I would welcome the opportunity to discuss both my experience "
-                "and the role's remaining requirements."
-            ),
-            "Thank you for your consideration.",
-            "Sincerely,",
-        ]
+        "Dear Hiring Team,",
+        "Sincerely,",
+    }.issubset(allowed)
     assert request["approved_evidence"] == [
         {
             "id": "python-research",
@@ -188,25 +181,31 @@ def test_generates_both_documents_and_exact_claim_traces_in_one_provider_call():
 
 def test_uses_one_sonnet_structured_output_request_for_the_whole_bundle():
     model_payload = {
-        "cv_text": "Builds reproducible ML research pipelines with Python.",
-        "cover_letter_text": (
-            "I build reproducible ML research pipelines with Python."
-        ),
-        "claims": [
+        "headline": "Applied AI Researcher",
+        "contacts": ["synthetic@example.com"],
+        "summary": ["Applied AI researcher building machine-learning systems."],
+        "experience": [
             {
-                "statement": "Builds reproducible ML research pipelines with Python.",
-                "kind": "skill",
-                "evidence_ids": ["python-research"],
-                "appears_in": ["cv"],
+                "role": "Machine Learning Researcher",
+                "organization": "Example Institute",
+                "location": "Amsterdam",
+                "dates": "2022 - Present",
+                "bullets": ["Built reproducible research systems."],
             },
+        ],
+        "education": [
             {
-                "statement": (
-                    "I build reproducible ML research pipelines with Python."
-                ),
-                "kind": "skill",
-                "evidence_ids": ["python-research"],
-                "appears_in": ["cover_letter"],
-            },
+                "degree": "PhD in Artificial Intelligence",
+                "institution": "Example University",
+                "location": "Amsterdam",
+                "dates": "2018 - 2022",
+            }
+        ],
+        "selected_publications": [],
+        "selected_evidence_ids": ["python-research"],
+        "target_role": "computer-vision research systems",
+        "cover_letter_source_paragraphs": [
+            "Applied AI researcher building machine-learning systems."
         ],
     }
     post = RecordingPost(
@@ -216,22 +215,52 @@ def test_uses_one_sonnet_structured_output_request_for_the_whole_bundle():
         }
     )
     generator = StructuredArtifactGenerator(
-        AnthropicArtifactProvider(api_key="test-secret", post=post)
+        AnthropicArtifactProvider(api_key="test-secret", post=post),
+        candidate_name="Synthetic Candidate",
     )
 
-    generated = generator.generate(tailoring_request())
+    source = "\n".join(
+        (
+            "Synthetic Candidate",
+            "Applied AI Researcher",
+            "synthetic@example.com",
+            "Applied AI researcher building machine-\nlearning systems.",
+            "Machine Learning Researcher",
+            "Example Institute",
+            "Amsterdam",
+            "2022 - Present",
+            "Built reproducible research systems.",
+            "PhD in Artificial Intelligence",
+            "Example University",
+            "2018 - 2022",
+        )
+    )
+    generated = generator.generate(
+        replace(tailoring_request(), canonical_cv_text=source)
+    )
 
-    assert generated.cv_text.startswith("CURRICULUM VITAE")
+    assert generated.cv_text.startswith("# Synthetic Candidate")
     assert "Uses Python to build reproducible" in generated.cv_text
+    assert "computer-vision research systems" in generated.cover_letter_text
     assert len(post.calls) == 1
     url, kwargs = post.calls[0]
     assert url == "https://api.anthropic.com/v1/messages"
     assert kwargs["json"]["model"] == "claude-sonnet-4-6"
     assert kwargs["json"]["output_config"]["format"]["type"] == "json_schema"
+    sent_request = __import__("json").loads(
+        kwargs["json"]["messages"][0]["content"]
+    )
+    assert sent_request["canonical_cv_text"] == source
     assert kwargs["json"]["output_config"]["format"]["schema"]["required"] == [
-        "cv_text",
-        "cover_letter_text",
-        "claims",
+        "headline",
+        "contacts",
+        "summary",
+        "experience",
+        "education",
+        "selected_publications",
+        "selected_evidence_ids",
+        "target_role",
+        "cover_letter_source_paragraphs",
     ]
     assert kwargs["headers"]["x-api-key"] == "test-secret"
     assert kwargs["timeout"] == 120
@@ -329,7 +358,9 @@ def test_generator_rebuilds_documents_from_exact_evidence_when_model_adds_prose(
 
 def test_production_composition_builds_one_private_versioned_pdf_bundle(tmp_path):
     canonical_cv = tmp_path / "curriculum_vitae.pdf"
-    canonical_cv.write_bytes(b"canonical CV")
+    canvas = Canvas(str(canonical_cv))
+    canvas.drawString(50, 800, "Synthetic Candidate canonical CV")
+    canvas.save()
     evidence_path = tmp_path / "evidence.yaml"
     evidence_path.write_text(
         yaml.safe_dump(
@@ -400,3 +431,125 @@ def test_production_composition_builds_one_private_versioned_pdf_bundle(tmp_path
         tmp_path / "job-agent" / "data" / "private" / "application-artifacts"
     )
     assert artifacts.claims[0].evidence_ids == ("python-research",)
+
+
+def test_production_bundle_preserves_complete_master_cv_identity_and_structure(
+    tmp_path,
+):
+    canonical_cv = tmp_path / "curriculum_vitae.pdf"
+    canvas = Canvas(str(canonical_cv))
+    source_lines = (
+        "Synthetic Candidate",
+        "Applied AI Researcher",
+        "synthetic@example.com | example.com/synthetic",
+        "Professional Profile",
+        "Applied AI researcher building reproducible machine-learning systems.",
+        "Professional Experience",
+        "Machine Learning Researcher",
+        "Example Research Institute",
+        "Amsterdam, The Netherlands",
+        "2022 - Present",
+        "Built reproducible computer-vision research pipelines.",
+        "Education",
+        "PhD in Artificial Intelligence",
+        "Example University",
+        "2018 - 2022",
+    )
+    y = 800
+    for line in source_lines:
+        canvas.drawString(50, y, line)
+        y -= 18
+    canvas.save()
+    evidence_path = tmp_path / "evidence.yaml"
+    evidence_path.write_text(
+        yaml.safe_dump(
+            {
+                "highlights": [],
+                "skill_evidence": [
+                    {
+                        "id": "python-research",
+                        "kind": "skill",
+                        "claim": (
+                            "Uses Python to build reproducible ML research pipelines."
+                        ),
+                        "evidence": "master-cv:skills",
+                        "suitable_for": ["research"],
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    provider = RecordingProvider(
+        {
+            "headline": "Applied AI Researcher",
+            "contacts": [
+                "synthetic@example.com",
+                "example.com/synthetic",
+            ],
+            "summary": [
+                "Applied AI researcher building reproducible machine-learning systems."
+            ],
+            "experience": [
+                {
+                    "role": "Machine Learning Researcher",
+                    "organization": "Example Research Institute",
+                    "location": "Amsterdam, The Netherlands",
+                    "dates": "2022 - Present",
+                    "bullets": [
+                        "Built reproducible computer-vision research pipelines."
+                    ],
+                }
+            ],
+            "education": [
+                {
+                    "degree": "PhD in Artificial Intelligence",
+                    "institution": "Example University",
+                    "location": "Amsterdam, The Netherlands",
+                    "dates": "2018 - 2022",
+                }
+            ],
+            "selected_publications": [],
+            "selected_evidence_ids": ["python-research"],
+            "target_role": "",
+            "cover_letter_source_paragraphs": [
+                "Applied AI researcher building reproducible machine-learning systems."
+            ],
+        }
+    )
+    service = build_application_artifact_service(
+        repository_root=tmp_path / "job-agent",
+        evidence_path=evidence_path,
+        canonical_cv_path=canonical_cv,
+        candidate_name="Synthetic Candidate",
+        provider=provider,
+    )
+    request = tailoring_request()
+
+    artifacts = service.prepare(
+        request.application_id,
+        request.intent_id,
+        {
+            "artifact_family": "research",
+            "requirements_evidence_matrix": request.matrix.to_dict(),
+        },
+        request.official_vacancy,
+    )
+
+    cv_text = "\n".join(
+        page.extract_text() or "" for page in PdfReader(artifacts.cv_path).pages
+    )
+    letter_text = "\n".join(
+        page.extract_text() or ""
+        for page in PdfReader(artifacts.cover_letter_path).pages
+    )
+    assert "synthetic@example.com" in cv_text
+    assert "PROFESSIONAL EXPERIENCE" in cv_text
+    assert "Machine Learning Researcher" in cv_text
+    assert "Example Research Institute" in cv_text
+    assert "2022 - Present" in cv_text
+    assert "EDUCATION" in cv_text
+    assert "PhD in Artificial Intelligence" in cv_text
+    assert "TECHNICAL SKILLS" in cv_text
+    assert "Applied AI researcher building reproducible" in letter_text
+    assert len(PdfReader(artifacts.cv_path).pages) <= 2

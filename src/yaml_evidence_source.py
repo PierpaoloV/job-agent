@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Any, Iterable, Mapping
 
 import yaml
+from pypdf import PdfReader
 
 from application_artifacts import EvidenceBankSnapshot, EvidenceRecord
 from application_domain import ArtifactFamily, EvidenceKind
@@ -41,10 +42,17 @@ class YamlEvidenceSource:
             raise ValueError("evidence bank must contain a YAML mapping")
 
         records = tuple(self._records(payload))
+        canonical_cv_text = "\n".join(
+            (page.extract_text() or "").strip()
+            for page in PdfReader(self._canonical_cv_path).pages
+        ).strip()
+        if not canonical_cv_text:
+            raise ValueError("canonical CV must contain extractable text")
         return EvidenceBankSnapshot(
             version=_sha256(evidence_bytes),
             canonical_cv_version=_sha256(canonical_cv_bytes),
             evidence=records,
+            canonical_cv_text=canonical_cv_text,
         )
 
     @staticmethod
