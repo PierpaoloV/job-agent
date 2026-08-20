@@ -129,8 +129,12 @@ def test_canonical_cv_projection_excludes_sensitive_profile_lines(tmp_path):
         (720, "Private key: TOP-SECRET"),
         (700, "Client secret: client-secret-value"),
         (680, "Refresh token: refresh-token-value"),
-        (660, "Professional Experience"),
-        (640, "Machine Learning Researcher"),
+        (660, "Veteran status: protected veteran"),
+        (640, "Salary expectation: EUR 120000"),
+        (620, "Hobbies"),
+        (600, "Political campaigning"),
+        (580, "Professional Experience"),
+        (560, "Machine Learning Researcher"),
     ):
         canvas.drawString(50, y, line)
     canvas.save()
@@ -147,3 +151,6 @@ def test_canonical_cv_projection_excludes_sensitive_profile_lines(tmp_path):
     assert "top-secret" not in projected.casefold()
     assert "client-secret-value" not in projected.casefold()
     assert "refresh-token-value" not in projected.casefold()
+    assert "protected veteran" not in projected.casefold()
+    assert "eur 120000" not in projected.casefold()
+    assert "political campaigning" not in projected.casefold()

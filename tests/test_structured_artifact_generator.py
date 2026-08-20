@@ -445,6 +445,69 @@ def test_structured_generation_rejects_fields_mixed_across_source_roles():
         ).generate(replace(tailoring_request(), canonical_cv_text=source))
 
 
+def test_structured_generation_rejects_bullet_from_a_second_source_role():
+    second_role = "\n".join(
+        (
+            "Research Engineer",
+            "2020 - 2022",
+            "Different Institute",
+            "London",
+            "Built a separate trustworthy research platform.",
+        )
+    )
+    source = professional_source().replace(
+        "\nEducation\n", f"\n{second_role}\nEducation\n"
+    )
+    payload = professional_selection()
+    payload["experience"] = [
+        {
+            "source_block": "\n".join(
+                (
+                    "Machine Learning Researcher",
+                    "2022 - Present",
+                    "Example Institute",
+                    "Amsterdam",
+                    "Built reproducible research systems.",
+                    second_role,
+                )
+            ),
+            "role": "Machine Learning Researcher",
+            "organization": "Example Institute",
+            "location": "Amsterdam",
+            "dates": "2022 - Present",
+            "bullets": ["Built a separate trustworthy research platform."],
+        }
+    ]
+
+    with pytest.raises(ValueError, match="exactly one entry"):
+        StructuredArtifactGenerator(
+            RecordingProvider(payload),
+            candidate_name="Synthetic Candidate",
+        ).generate(replace(tailoring_request(), canonical_cv_text=source))
+
+
+def test_structured_generation_rejects_abbreviated_role_metadata_and_target():
+    abbreviated = professional_selection()
+    abbreviated["experience"] = [
+        {
+            **abbreviated["experience"][0],
+            "role": "Machine",
+            "dates": "2022",
+        }
+    ]
+    with pytest.raises(ValueError, match="role must copy canonical CV text"):
+        StructuredArtifactGenerator(
+            RecordingProvider(abbreviated),
+            candidate_name="Synthetic Candidate",
+        ).generate(tailoring_request())
+
+    with pytest.raises(ValueError, match="target_role"):
+        StructuredArtifactGenerator(
+            RecordingProvider(professional_selection(target_role="research")),
+            candidate_name="Synthetic Candidate",
+        ).generate(tailoring_request())
+
+
 def test_structured_generation_requires_publication_and_first_person_letter_source():
     generator = lambda payload: StructuredArtifactGenerator(  # noqa: E731
         RecordingProvider(payload),

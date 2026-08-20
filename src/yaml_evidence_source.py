@@ -27,12 +27,19 @@ _FAMILY_ALIASES = {
 }
 _RECORD_SECTIONS = ("highlights", "skill_evidence")
 _BLOCKED_SECTION_HEADINGS = {
+    "application answers",
+    "compensation",
     "demographics",
+    "equal opportunity information",
     "health",
+    "hobbies",
     "interests",
     "languages and interests",
     "personal details",
     "personal information",
+    "references",
+    "salary expectations",
+    "work authorization",
 }
 _SAFE_SECTION_HEADINGS = {
     "certifications and additional learning",
@@ -50,12 +57,15 @@ _SAFE_SECTION_HEADINGS = {
 _SENSITIVE_LINE = re.compile(
     r"\b(?:"
     r"api[ _-]?key|access[ _-]?token|refresh[ _-]?token|auth(?:entication)?[ _-]?token|"
-    r"ats answer|bearer token|citizen|citizenship|client[ _-]?secret|credential|"
+    r"ats answer|application answer|bearer token|citizen|citizenship|"
+    r"client[ _-]?secret|compensation|credential|"
     r"date of birth|"
     r"demographic|diagnos\w*|disabil\w*|ethnic\w*|gender|health condition|"
-    r"identity document|marital|nationality|oauth|passport|passphrase|password|"
+    r"hobb(?:y|ies)|identity document|marital|nationality|oauth|passport|"
+    r"passphrase|password|political|"
     r"private[ _-]?key|race|religio\w*|secret(?:[ _-]?key)?|social security|"
-    r"ssh[ _-]?key|tax id|webhook[ _-]?(?:secret|token)"
+    r"salary expectation|ssh[ _-]?key|tax id|veteran|webhook[ _-]?(?:secret|token)|"
+    r"work authori[sz]ation"
     r")\b",
     re.IGNORECASE,
 )

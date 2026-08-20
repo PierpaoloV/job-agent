@@ -21,6 +21,20 @@ from application_artifacts import (
 from application_domain import ArtifactDocument, EvidenceKind
 
 
+_DATE_RANGE = re.compile(
+    r"\b(?:(?:Jan\.?|Feb\.?|Mar\.?|Apr\.?|May|Jun\.?|Jul\.?|Aug\.?|Sep\.?|"
+    r"Oct\.?|Nov\.?|Dec\.?)\s+)?(?:19|20)\d{2}\s*[-‐‑‒–—−]\s*"
+    r"(?:(?:(?:Jan\.?|Feb\.?|Mar\.?|Apr\.?|May|Jun\.?|Jul\.?|Aug\.?|"
+    r"Sep\.?|Oct\.?|Nov\.?|Dec\.?)\s+)?(?:19|20)\d{2}|Present)\b",
+    re.IGNORECASE,
+)
+_ROLE_NOUN = re.compile(
+    r"\b(?:analyst|architect|developer|director|engineer|lead|manager|researcher|"
+    r"scientist|specialist|system|systems)\b",
+    re.IGNORECASE,
+)
+
+
 class ArtifactGenerationProvider(Protocol):
     """External model boundary used once for one artifact bundle."""
 
@@ -320,9 +334,7 @@ def _build_professional_documents(
     if not any(re.search(r"\b(?:I|my|me)\b", item, re.IGNORECASE) for item in cover_source):
         raise ValueError("cover letter requires a first-person canonical CV paragraph")
     target_role = str(payload.get("target_role", "")).strip()
-    if not target_role or normalize_cv_text(
-        target_role
-    ) not in normalize_cv_text(request.official_vacancy.description):
+    if not _valid_target_role(target_role, request.official_vacancy.description):
         raise ValueError("target_role must copy the official vacancy")
     raw_requirement_ids = payload.get("target_requirement_ids")
     if not isinstance(raw_requirement_ids, list) or not 1 <= len(
@@ -577,7 +589,15 @@ def _source_entries(
         if not isinstance(item, Mapping):
             raise ValueError(f"{key} entries must be objects")
         source_block = _source_value(item, "source_block", source, minimum_words=6)
-        parsed = {name: _source_value(item, name, source) for name in required}
+        parsed = {
+            name: _source_value(
+                item,
+                name,
+                source,
+                minimum_words=_minimum_field_words(name),
+            )
+            for name in required
+        }
         block_lines = tuple(
             line.strip()
             for line in source_block.splitlines()
@@ -585,6 +605,8 @@ def _source_entries(
         )
         if not _entry_header_matches(block_lines, parsed, header_order):
             raise ValueError(f"{key} source_block does not bind one source entry")
+        if list_fields and len(_DATE_RANGE.findall(source_block)) != 1:
+            raise ValueError(f"{key} source_block must contain exactly one entry")
         for name in list_fields:
             parsed[name] = _source_values(
                 item,
@@ -615,19 +637,37 @@ def _entry_header_matches(
     ):
         if cursor >= len(lines):
             return False
-        line = normalize_cv_text(lines[cursor])
         left = normalize_cv_text(fields[left_name])
         right = normalize_cv_text(fields[right_name])
-        if not line.startswith(left):
-            return False
-        if right in line[len(left) :]:
+        line = normalize_cv_text(lines[cursor])
+        if line == f"{left} {right}":
             cursor += 1
             continue
-        cursor += 1
-        if cursor >= len(lines) or normalize_cv_text(lines[cursor]) != right:
+        if line != left or cursor + 1 >= len(lines):
             return False
-        cursor += 1
+        if normalize_cv_text(lines[cursor + 1]) != right:
+            return False
+        cursor += 2
     return True
+
+
+def _minimum_field_words(name: str) -> int:
+    if name in {"role", "organization", "degree", "institution"}:
+        return 2
+    if name == "dates":
+        return 2
+    return 1
+
+
+def _valid_target_role(value: str, vacancy: str) -> bool:
+    normalized = normalize_cv_text(value)
+    if (
+        len(value.split()) < 2
+        or len(value) < 8
+        or normalized not in normalize_cv_text(vacancy)
+    ):
+        return False
+    return bool(_ROLE_NOUN.search(value))
 
 
 __all__ = [
