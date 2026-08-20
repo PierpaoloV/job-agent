@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import argparse
 from dataclasses import dataclass
+import os
 import re
 from typing import Callable, Mapping, Sequence
 
@@ -112,6 +114,14 @@ class GatewayArtifactReviewPublisher:
             raise TelegramSendUncertain(
                 "Telegram review omitted protected document receipts"
             )
+        document_message_ids = tuple(
+            item.message_id for item in document_receipts
+        )
+        self._bind(
+            authorization.review_id,
+            document_message_ids,
+            None,
+        )
         try:
             control_receipt = self._control_sender(
                 TelegramMessage(
@@ -128,7 +138,7 @@ class GatewayArtifactReviewPublisher:
             )
             self._bind(
                 authorization.review_id,
-                tuple(item.message_id for item in document_receipts),
+                document_message_ids,
                 control_receipt.message_id,
             )
         except Exception as exc:
@@ -205,18 +215,22 @@ class GatewayArtifactReviewPublisher:
         self,
         review_id: str,
         document_message_ids: tuple[int, ...],
-        control_message_id: int,
+        control_message_id: int | None,
     ) -> None:
+        payload: dict[str, object] = {
+            "document_message_ids": list(document_message_ids),
+        }
+        expected_status = "documents_sent"
+        if control_message_id is not None:
+            payload["control_message_id"] = control_message_id
+            expected_status = "pending"
         response = self._session.post(
             f"{self._endpoint}/v1/artifact-reviews/{review_id}/messages",
             headers=self._headers(),
-            json={
-                "document_message_ids": list(document_message_ids),
-                "control_message_id": control_message_id,
-            },
+            json=payload,
             timeout=15,
         )
-        if not response.ok or response.json() != {"status": "pending"}:
+        if not response.ok or response.json() != {"status": expected_status}:
             raise RuntimeError("Artifact review gateway did not bind messages")
 
     def _headers(self) -> dict[str, str]:
@@ -242,4 +256,141 @@ def _validate_identity(
         raise ValueError("Artifact review run URL must be canonical")
 
 
-__all__ = ["ArtifactReviewReceipt", "GatewayArtifactReviewPublisher"]
+def acknowledge_gateway_artifact_review(
+    *,
+    endpoint: str,
+    internal_token: str,
+    review_id: str,
+    action: str,
+    application_id: str,
+    official_vacancy_version: str,
+    package_hash: str,
+    session=requests,
+) -> str:
+    """Confirm that an exact review decision reached authoritative state."""
+
+    endpoint = str(endpoint).rstrip("/")
+    internal_token = str(internal_token).strip()
+    expected_status = {
+        "approve_artifacts": "approved",
+        "regenerate_artifacts": "regenerate_requested",
+    }.get(action)
+    if (
+        not endpoint.startswith("https://")
+        or not internal_token
+        or not re.fullmatch(r"[A-Za-z0-9_-]{8,48}", review_id)
+        or expected_status is None
+        or not _APPLICATION_ID.fullmatch(application_id)
+        or not _SHA256.fullmatch(official_vacancy_version)
+        or not _SHA256.fullmatch(package_hash)
+    ):
+        raise ValueError("Artifact review acknowledgement is not canonical")
+    response = session.post(
+        f"{endpoint}/v1/artifact-reviews/{review_id}/decision-ack",
+        headers={
+            "Authorization": f"Bearer {internal_token}",
+            "Content-Type": "application/json",
+        },
+        json={
+            "action": action,
+            "application_id": application_id,
+            "official_vacancy_version": official_vacancy_version,
+            "package_hash": package_hash,
+        },
+        timeout=15,
+    )
+    if not response.ok or response.json() != {"status": expected_status}:
+        raise RuntimeError("Artifact review acknowledgement was rejected")
+    return expected_status
+
+
+def recover_gateway_artifact_review_dispatch(
+    *,
+    endpoint: str,
+    internal_token: str,
+    review_id: str,
+    action: str,
+    application_id: str,
+    official_vacancy_version: str,
+    package_hash: str,
+    confirmed_absent: bool,
+    session=requests,
+) -> str:
+    """Explicitly retry only after an operator proves no GitHub run exists."""
+
+    if not confirmed_absent:
+        raise ValueError("GitHub run absence must be explicitly confirmed")
+    endpoint = str(endpoint).rstrip("/")
+    internal_token = str(internal_token).strip()
+    if (
+        not endpoint.startswith("https://")
+        or not internal_token
+        or not re.fullmatch(r"[A-Za-z0-9_-]{8,48}", review_id)
+        or action not in {"approve_artifacts", "regenerate_artifacts"}
+        or not _APPLICATION_ID.fullmatch(application_id)
+        or not _SHA256.fullmatch(official_vacancy_version)
+        or not _SHA256.fullmatch(package_hash)
+    ):
+        raise ValueError("Artifact review dispatch recovery is not canonical")
+    response = session.post(
+        f"{endpoint}/v1/artifact-reviews/{review_id}/dispatch-recovery",
+        headers={
+            "Authorization": f"Bearer {internal_token}",
+            "Content-Type": "application/json",
+        },
+        json={
+            "confirmed_absent": True,
+            "action": action,
+            "application_id": application_id,
+            "official_vacancy_version": official_vacancy_version,
+            "package_hash": package_hash,
+        },
+        timeout=15,
+    )
+    if not response.ok or response.json() != {"status": "dispatch_accepted"}:
+        raise RuntimeError("Artifact review dispatch recovery was rejected")
+    return "dispatch_accepted"
+
+
+def main(argv: Sequence[str] | None = None) -> int:
+    parser = argparse.ArgumentParser()
+    parser.add_argument(
+        "command", choices=("acknowledge", "recover-dispatch")
+    )
+    parser.add_argument("--review-id", required=True)
+    parser.add_argument("--action", required=True)
+    parser.add_argument("--application-id", required=True)
+    parser.add_argument("--official-vacancy-version", required=True)
+    parser.add_argument("--package-hash", required=True)
+    parser.add_argument("--confirmed-absent", action="store_true")
+    args = parser.parse_args(argv)
+    kwargs = {
+        "endpoint": os.environ["JOB_AGENT_CALLBACK_GATEWAY_URL"],
+        "internal_token": os.environ["JOB_AGENT_CALLBACK_GATEWAY_TOKEN"],
+        "review_id": args.review_id,
+        "action": args.action,
+        "application_id": args.application_id,
+        "official_vacancy_version": args.official_vacancy_version,
+        "package_hash": args.package_hash,
+    }
+    if args.command == "acknowledge":
+        acknowledge_gateway_artifact_review(**kwargs)
+    else:
+        recover_gateway_artifact_review_dispatch(
+            **kwargs,
+            confirmed_absent=args.confirmed_absent,
+        )
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
+
+
+__all__ = [
+    "ArtifactReviewReceipt",
+    "GatewayArtifactReviewPublisher",
+    "acknowledge_gateway_artifact_review",
+    "recover_gateway_artifact_review_dispatch",
+    "main",
+]

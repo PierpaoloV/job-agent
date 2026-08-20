@@ -7,6 +7,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 from application_domain import PreparedArtifacts  # noqa: E402
 from hosted_artifact_review import (  # noqa: E402
     GatewayArtifactReviewPublisher,
+    acknowledge_gateway_artifact_review,
+    recover_gateway_artifact_review_dispatch,
 )
 from notify_telegram import TelegramReceipt  # noqa: E402
 
@@ -51,7 +53,15 @@ class GatewaySession:
                 }
             )
         if url.endswith("/v1/artifact-reviews/review-token-1/messages"):
-            return Response({"status": "pending"})
+            return Response(
+                {
+                    "status": (
+                        "pending"
+                        if "control_message_id" in kwargs["json"]
+                        else "documents_sent"
+                    )
+                }
+            )
         raise AssertionError(f"unexpected URL: {url}")
 
 
@@ -127,9 +137,82 @@ def test_review_publisher_sends_protected_pdfs_then_binds_exact_receipts(tmp_pat
         "actor_id": "42",
         "chat_id": "42",
     }
-    bind_url, bind = session.calls[1]
-    assert bind_url.endswith("/v1/artifact-reviews/review-token-1/messages")
-    assert bind["json"] == {
+    document_bind_url, document_bind = session.calls[1]
+    assert document_bind_url.endswith(
+        "/v1/artifact-reviews/review-token-1/messages"
+    )
+    assert document_bind["json"] == {
+        "document_message_ids": [701, 702],
+    }
+    control_bind_url, control_bind = session.calls[2]
+    assert control_bind_url.endswith(
+        "/v1/artifact-reviews/review-token-1/messages"
+    )
+    assert control_bind["json"] == {
         "document_message_ids": [701, 702],
         "control_message_id": 703,
     }
+
+
+def test_gateway_acknowledgement_happens_only_after_authoritative_state():
+    calls = []
+
+    class AckSession:
+        @staticmethod
+        def post(url, **kwargs):
+            calls.append((url, kwargs))
+            return Response({"status": "approved"})
+
+    status = acknowledge_gateway_artifact_review(
+        endpoint="https://gateway.example",
+        internal_token="internal-secret",
+        review_id="review-token-1",
+        action="approve_artifacts",
+        application_id=APPLICATION_ID,
+        official_vacancy_version=VACANCY_VERSION,
+        package_hash=PACKAGE_HASH,
+        session=AckSession(),
+    )
+
+    assert status == "approved"
+    assert calls[0][0].endswith(
+        "/v1/artifact-reviews/review-token-1/decision-ack"
+    )
+    assert calls[0][1]["json"] == {
+        "action": "approve_artifacts",
+        "application_id": APPLICATION_ID,
+        "official_vacancy_version": VACANCY_VERSION,
+        "package_hash": PACKAGE_HASH,
+    }
+
+
+def test_dispatch_recovery_requires_confirmed_absence_of_a_github_run():
+    class RecoverySession:
+        @staticmethod
+        def post(_url, **_kwargs):
+            return Response({"status": "dispatch_accepted"})
+
+    with __import__("pytest").raises(ValueError, match="explicitly confirmed"):
+        recover_gateway_artifact_review_dispatch(
+            endpoint="https://gateway.example",
+            internal_token="internal-secret",
+            review_id="review-token-1",
+            action="approve_artifacts",
+            application_id=APPLICATION_ID,
+            official_vacancy_version=VACANCY_VERSION,
+            package_hash=PACKAGE_HASH,
+            confirmed_absent=False,
+            session=RecoverySession(),
+        )
+
+    assert recover_gateway_artifact_review_dispatch(
+        endpoint="https://gateway.example",
+        internal_token="internal-secret",
+        review_id="review-token-1",
+        action="approve_artifacts",
+        application_id=APPLICATION_ID,
+        official_vacancy_version=VACANCY_VERSION,
+        package_hash=PACKAGE_HASH,
+        confirmed_absent=True,
+        session=RecoverySession(),
+    ) == "dispatch_accepted"

@@ -421,6 +421,23 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
+      - name: Acknowledge authoritative artifact approval
+        env:
+          PYTHONPATH: src
+          JOB_AGENT_CALLBACK_GATEWAY_URL: ${{ vars.JOB_AGENT_CALLBACK_GATEWAY_URL }}
+          JOB_AGENT_CALLBACK_GATEWAY_TOKEN: ${{ secrets.JOB_AGENT_CALLBACK_GATEWAY_TOKEN }}
+          REVIEW_ID: ${{ github.event.client_payload.review_id }}
+          APPLICATION_ID: ${{ github.event.client_payload.application_id }}
+          VACANCY_VERSION: ${{ github.event.client_payload.official_vacancy_version }}
+          PACKAGE_HASH: ${{ github.event.client_payload.package_hash }}
+        run: >-
+          python -m hosted_artifact_review acknowledge
+          --review-id "$REVIEW_ID"
+          --action approve_artifacts
+          --application-id "$APPLICATION_ID"
+          --official-vacancy-version "$VACANCY_VERSION"
+          --package-hash "$PACKAGE_HASH"
+
   prepare-artifacts:
     if: >-
       github.event_name == 'repository_dispatch'
@@ -492,6 +509,49 @@ jobs:
           --package-hash "$PACKAGE_HASH"
           --actor-id "$ACTOR_ID"
           --chat-id "$CHAT_ID"
+
+      - name: Package authoritative regeneration decision
+        if: >-
+          github.event.action == 'telegram-opportunity-decision'
+          && github.event.client_payload.action == 'regenerate_artifacts'
+        env:
+          PYTHONPATH: src
+        run: >-
+          python -m actions_state write-manifest
+          --root . --workflow run.yml
+          --branch ${{ github.event.repository.default_branch }}
+          --stage decision
+
+      - name: Publish authoritative regeneration decision
+        if: >-
+          github.event.action == 'telegram-opportunity-decision'
+          && github.event.client_payload.action == 'regenerate_artifacts'
+        uses: actions/upload-artifact@v4
+        with:
+          name: discovery-state-artifact-regeneration-${{ github.run_id }}-${{ github.run_attempt }}
+          path: data/actions-state
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Acknowledge authoritative regeneration decision
+        if: >-
+          github.event.action == 'telegram-opportunity-decision'
+          && github.event.client_payload.action == 'regenerate_artifacts'
+        env:
+          PYTHONPATH: src
+          JOB_AGENT_CALLBACK_GATEWAY_URL: ${{ vars.JOB_AGENT_CALLBACK_GATEWAY_URL }}
+          JOB_AGENT_CALLBACK_GATEWAY_TOKEN: ${{ secrets.JOB_AGENT_CALLBACK_GATEWAY_TOKEN }}
+          REVIEW_ID: ${{ github.event.client_payload.review_id }}
+          APPLICATION_ID: ${{ github.event.client_payload.application_id }}
+          VACANCY_VERSION: ${{ github.event.client_payload.official_vacancy_version }}
+          PACKAGE_HASH: ${{ github.event.client_payload.package_hash }}
+        run: >-
+          python -m hosted_artifact_review acknowledge
+          --review-id "$REVIEW_ID"
+          --action regenerate_artifacts
+          --application-id "$APPLICATION_ID"
+          --official-vacancy-version "$VACANCY_VERSION"
+          --package-hash "$PACKAGE_HASH"
 
       - name: Materialize private evidence and canonical CV
         env:

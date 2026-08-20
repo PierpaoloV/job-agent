@@ -10,7 +10,12 @@ It exposes:
 - `POST /v1/review-authorizations` to mint 24-hour, package-scoped
   `Approva`/`Rigenera` capabilities.
 - `POST /v1/artifact-reviews/:id/messages` to bind the exact two protected
-  PDF receipts and review-control receipt before a decision is accepted.
+  PDF receipts immediately, then the review-control receipt before a decision
+  is accepted.
+- `POST /v1/artifact-reviews/:id/decision-ack` for Actions to confirm that the
+  exact decision was persisted in the authoritative state artifact.
+- `POST /v1/artifact-reviews/:id/dispatch-recovery` for an explicit operator
+  retry only after the corresponding GitHub run is confirmed absent.
 - `POST /telegram` for Telegram webhook updates.
 - `GET /health` for non-sensitive health checks.
 
@@ -23,7 +28,12 @@ owner to press the intended action again.
 prompt is sent, and the owner's exact reply is stored in D1 before GitHub
 dispatch.
 An uncertain GitHub transport outcome is retained for manual reconciliation;
-it is never retried automatically.
+it is never retried automatically. After confirming that no corresponding
+GitHub run exists, use `python -m hosted_artifact_review recover-dispatch` with
+the exact review identity and `--confirmed-absent`. A 204 repository dispatch
+only moves the review to `dispatch_accepted`; `approved` or
+`regenerate_requested` is recorded only after Actions publishes its state and
+calls `decision-ack`.
 Artifact-review callbacks delete both protected PDFs and their controls before
 dispatching the exact package decision. A 15-minute cron sweep removes any
 undecided review once its 24-hour window expires.

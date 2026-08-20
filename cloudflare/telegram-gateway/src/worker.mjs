@@ -148,21 +148,35 @@ export class D1GatewayStore {
 
   async bindReviewMessages(reviewId, scope, messageIds) {
     const serialized = JSON.stringify(messageIds.documentMessageIds);
-    const update = await this.database
-      .prepare(
-        "UPDATE artifact_reviews SET document_message_ids = ?1, " +
-          "control_message_id = ?2, status = 'pending' " +
-          "WHERE review_id = ?3 AND actor_id = ?4 AND chat_id = ?5 " +
-          "AND status = 'authorizing'",
-      )
-      .bind(
-        serialized,
-        messageIds.controlMessageId,
-        reviewId,
-        scope.actorId,
-        scope.chatId,
-      )
-      .run();
+    let update;
+    if (messageIds.controlMessageId === null) {
+      update = await this.database
+        .prepare(
+          "UPDATE artifact_reviews SET document_message_ids = ?1, " +
+            "status = 'documents_sent' WHERE review_id = ?2 " +
+            "AND actor_id = ?3 AND chat_id = ?4 " +
+            "AND status = 'authorizing'",
+        )
+        .bind(serialized, reviewId, scope.actorId, scope.chatId)
+        .run();
+    } else {
+      update = await this.database
+        .prepare(
+          "UPDATE artifact_reviews SET document_message_ids = ?1, " +
+            "control_message_id = ?2, status = 'pending' " +
+            "WHERE review_id = ?3 AND actor_id = ?4 AND chat_id = ?5 " +
+            "AND status IN ('authorizing', 'documents_sent') " +
+            "AND (document_message_ids IS NULL OR document_message_ids = ?1)",
+        )
+        .bind(
+          serialized,
+          messageIds.controlMessageId,
+          reviewId,
+          scope.actorId,
+          scope.chatId,
+        )
+        .run();
+    }
     const row = await this.database
       .prepare(
         "SELECT review_id, status, document_message_ids, " +
@@ -171,12 +185,15 @@ export class D1GatewayStore {
       )
       .bind(reviewId, scope.actorId, scope.chatId)
       .first();
-    if (!row || String(row.status) !== "pending") {
+    const expectedStatus =
+      messageIds.controlMessageId === null ? "documents_sent" : "pending";
+    if (!row || String(row.status) !== expectedStatus) {
       return null;
     }
     if (
       String(row.document_message_ids) !== serialized ||
-      Number(row.control_message_id) !== messageIds.controlMessageId
+      (messageIds.controlMessageId !== null &&
+        Number(row.control_message_id) !== messageIds.controlMessageId)
     ) {
       return null;
     }
@@ -239,15 +256,95 @@ export class D1GatewayStore {
     };
   }
 
-  async markReviewDecided(reviewId, status, decidedAt) {
+  async markReviewDispatchAccepted(reviewId, acceptedAt) {
     await this.database
       .prepare(
-        "UPDATE artifact_reviews SET status = ?1, decided_at = ?2 " +
-          "WHERE review_id = ?3 AND status IN ('deciding', " +
-          "'cleanup_retrying')",
+        "UPDATE artifact_reviews SET status = 'dispatch_accepted', " +
+          "status_evidence = ?1 WHERE review_id = ?2 " +
+          "AND status IN ('deciding', 'cleanup_retrying', " +
+          "'dispatch_recovering')",
       )
-      .bind(status, decidedAt, reviewId)
+      .bind(`github_dispatch_accepted:${acceptedAt}`, reviewId)
       .run();
+  }
+
+  async acknowledgeReviewDecision(reviewId, identity, acknowledgedAt) {
+    const status =
+      identity.action === "approve_artifacts"
+        ? "approved"
+        : "regenerate_requested";
+    const result = await this.database
+      .prepare(
+        "UPDATE artifact_reviews SET status = ?1, decided_at = ?2, " +
+          "status_evidence = 'actions_state_persisted' " +
+          "WHERE review_id = ?3 AND application_id = ?4 " +
+          "AND vacancy_version = ?5 AND package_hash = ?6 " +
+          "AND decision = ?7 AND status = 'dispatch_accepted'",
+      )
+      .bind(
+        status,
+        acknowledgedAt,
+        reviewId,
+        identity.applicationId,
+        identity.vacancyVersion,
+        identity.packageHash,
+        identity.action,
+      )
+      .run();
+    if (result.meta.changes === 1) {
+      return status;
+    }
+    const existing = await this.database
+      .prepare(
+        "SELECT status FROM artifact_reviews WHERE review_id = ?1 " +
+          "AND application_id = ?2 AND vacancy_version = ?3 " +
+          "AND package_hash = ?4 AND decision = ?5",
+      )
+      .bind(
+        reviewId,
+        identity.applicationId,
+        identity.vacancyVersion,
+        identity.packageHash,
+        identity.action,
+      )
+      .first();
+    return existing && String(existing.status) === status ? status : null;
+  }
+
+  async claimReviewDispatchRecovery(reviewId, identity) {
+    const result = await this.database
+      .prepare(
+        "UPDATE artifact_reviews SET status = 'dispatch_recovering' " +
+          "WHERE review_id = ?1 AND application_id = ?2 " +
+          "AND vacancy_version = ?3 AND package_hash = ?4 " +
+          "AND decision = ?5 AND status = 'dispatch_uncertain'",
+      )
+      .bind(
+        reviewId,
+        identity.applicationId,
+        identity.vacancyVersion,
+        identity.packageHash,
+        identity.action,
+      )
+      .run();
+    if (result.meta.changes !== 1) {
+      return null;
+    }
+    const row = await this.database
+      .prepare(
+        "SELECT actor_id, chat_id FROM artifact_reviews " +
+          "WHERE review_id = ?1 AND status = 'dispatch_recovering'",
+      )
+      .bind(reviewId)
+      .first();
+    return row
+      ? {
+          ...identity,
+          reviewId,
+          actorId: String(row.actor_id),
+          chatId: String(row.chat_id),
+        }
+      : null;
   }
 
   async markReviewCleanupUncertain(reviewId, evidence) {
@@ -255,7 +352,8 @@ export class D1GatewayStore {
       .prepare(
         "UPDATE artifact_reviews SET status = 'cleanup_uncertain', " +
           "status_evidence = ?1 WHERE review_id = ?2 " +
-          "AND status IN ('deciding', 'cleanup_retrying')",
+          "AND status IN ('deciding', 'cleanup_retrying', " +
+          "'dispatch_recovering')",
       )
       .bind(evidence, reviewId)
       .run();
@@ -266,7 +364,8 @@ export class D1GatewayStore {
       .prepare(
         "UPDATE artifact_reviews SET status = 'dispatch_uncertain', " +
           "status_evidence = ?1 WHERE review_id = ?2 " +
-          "AND status IN ('deciding', 'cleanup_retrying')",
+          "AND status IN ('deciding', 'cleanup_retrying', " +
+          "'dispatch_recovering')",
       )
       .bind(evidence, reviewId)
       .run();
@@ -276,7 +375,7 @@ export class D1GatewayStore {
     await this.database
       .prepare(
         "UPDATE artifact_reviews SET status = 'expiring' " +
-          "WHERE status IN ('pending', 'expiring', " +
+        "WHERE status IN ('documents_sent', 'pending', 'expiring', " +
           "'expiry_cleanup_uncertain') AND expires_at <= ?1",
       )
       .bind(observedAt)
@@ -293,7 +392,10 @@ export class D1GatewayStore {
       reviewId: String(row.review_id),
       chatId: String(row.chat_id),
       documentMessageIds: JSON.parse(String(row.document_message_ids)),
-      controlMessageId: Number(row.control_message_id),
+      controlMessageId:
+        row.control_message_id === null
+          ? null
+          : Number(row.control_message_id),
     }));
   }
 
@@ -636,6 +738,31 @@ export function createGateway({
           reviewMessages[1],
         );
       }
+      const reviewDecisionAck = url.pathname.match(
+        /^\/v1\/artifact-reviews\/([A-Za-z0-9_-]{8,48})\/decision-ack$/u,
+      );
+      if (request.method === "POST" && reviewDecisionAck) {
+        return acknowledgeReviewDecision(
+          request,
+          env,
+          storeFactory(env),
+          reviewDecisionAck[1],
+          now,
+        );
+      }
+      const reviewDispatchRecovery = url.pathname.match(
+        /^\/v1\/artifact-reviews\/([A-Za-z0-9_-]{8,48})\/dispatch-recovery$/u,
+      );
+      if (request.method === "POST" && reviewDispatchRecovery) {
+        return recoverReviewDispatch(
+          request,
+          env,
+          storeFactory(env),
+          reviewDispatchRecovery[1],
+          now,
+          fetchImpl,
+        );
+      }
       if (request.method === "POST" && url.pathname === "/telegram") {
         return acceptTelegramUpdate(
           request,
@@ -672,7 +799,9 @@ async function cleanupExpiredArtifactReviews(
     try {
       for (const messageId of [
         ...review.documentMessageIds,
-        review.controlMessageId,
+        ...(review.controlMessageId === null
+          ? []
+          : [review.controlMessageId]),
       ]) {
         await deleteTelegramMessage(
           fetchImpl,
@@ -737,13 +866,7 @@ async function cleanupExpiredArtifactReviews(
       );
       continue;
     }
-    await store.markReviewDecided(
-      review.reviewId,
-      review.action === "approve_artifacts"
-        ? "approved"
-        : "regenerate_requested",
-      observedAt,
-    );
+    await store.markReviewDispatchAccepted(review.reviewId, observedAt);
   }
 }
 
@@ -868,13 +991,13 @@ async function bindReviewMessages(request, env, store, reviewId) {
     return json({ error: "invalid_json" }, 400);
   }
   const documentMessageIds = value?.document_message_ids;
-  const controlMessageId = value?.control_message_id;
+  const controlMessageId = value?.control_message_id ?? null;
   if (
     !Array.isArray(documentMessageIds) ||
     documentMessageIds.length !== 2 ||
     !documentMessageIds.every((item) => Number.isSafeInteger(item)) ||
     new Set(documentMessageIds).size !== 2 ||
-    !Number.isSafeInteger(controlMessageId) ||
+    (controlMessageId !== null && !Number.isSafeInteger(controlMessageId)) ||
     documentMessageIds.includes(controlMessageId)
   ) {
     return json({ error: "invalid_message_receipts" }, 400);
@@ -888,8 +1011,133 @@ async function bindReviewMessages(request, env, store, reviewId) {
     { documentMessageIds, controlMessageId },
   );
   return bound
-    ? json({ status: "pending" })
+    ? json({ status: controlMessageId === null ? "documents_sent" : "pending" })
     : json({ error: "review_binding_conflict" }, 409);
+}
+
+
+async function acknowledgeReviewDecision(
+  request,
+  env,
+  store,
+  reviewId,
+  now,
+) {
+  const bearer = request.headers.get("authorization") || "";
+  const expected = `Bearer ${required(env, "INTERNAL_API_TOKEN")}`;
+  if (!(await secureEqual(bearer, expected))) {
+    return json({ error: "unauthorized" }, 401);
+  }
+  let value;
+  try {
+    value = await request.json();
+  } catch {
+    return json({ error: "invalid_json" }, 400);
+  }
+  const applicationId = cleanString(value?.application_id, 128);
+  const vacancyVersion = cleanString(
+    value?.official_vacancy_version,
+    80,
+  );
+  const packageHash = cleanString(value?.package_hash, 80);
+  const action = cleanString(value?.action, 32);
+  if (
+    !APPLICATION_ID.test(applicationId) ||
+    !VACANCY_VERSION.test(vacancyVersion) ||
+    !VACANCY_VERSION.test(packageHash) ||
+    !REVIEW_ACTIONS.some(([candidate]) => candidate === action)
+  ) {
+    return json({ error: "invalid_review_decision_identity" }, 400);
+  }
+  const status = await store.acknowledgeReviewDecision(
+    reviewId,
+    { applicationId, vacancyVersion, packageHash, action },
+    now().toISOString(),
+  );
+  return status
+    ? json({ status })
+    : json({ error: "review_decision_ack_conflict" }, 409);
+}
+
+
+async function recoverReviewDispatch(
+  request,
+  env,
+  store,
+  reviewId,
+  now,
+  fetchImpl,
+) {
+  const bearer = request.headers.get("authorization") || "";
+  const expected = `Bearer ${required(env, "INTERNAL_API_TOKEN")}`;
+  if (!(await secureEqual(bearer, expected))) {
+    return json({ error: "unauthorized" }, 401);
+  }
+  let value;
+  try {
+    value = await request.json();
+  } catch {
+    return json({ error: "invalid_json" }, 400);
+  }
+  if (value?.confirmed_absent !== true) {
+    return json({ error: "github_run_absence_not_confirmed" }, 400);
+  }
+  const identity = parseReviewDecisionIdentity(value);
+  if (!identity) {
+    return json({ error: "invalid_review_decision_identity" }, 400);
+  }
+  const review = await store.claimReviewDispatchRecovery(reviewId, identity);
+  if (!review) {
+    return json({ error: "review_dispatch_recovery_conflict" }, 409);
+  }
+  let response;
+  try {
+    response = await dispatchToGitHub(fetchImpl, env, {
+      action: review.action,
+      review_id: review.reviewId,
+      application_id: review.applicationId,
+      official_vacancy_version: review.vacancyVersion,
+      package_hash: review.packageHash,
+      telegram_update_id: `review-recovery:${review.reviewId}`,
+      actor_id: review.actorId,
+      chat_id: review.chatId,
+    });
+  } catch (error) {
+    await store.markReviewDispatchUncertain(
+      review.reviewId,
+      `github_dispatch_uncertain:${String(error)}`,
+    );
+    return json({ status: "dispatch_uncertain" }, 503);
+  }
+  if (response.status !== 204) {
+    await store.markReviewDispatchUncertain(
+      review.reviewId,
+      `github_http_${response.status}`,
+    );
+    return json({ status: "dispatch_uncertain" }, 503);
+  }
+  await store.markReviewDispatchAccepted(
+    review.reviewId,
+    now().toISOString(),
+  );
+  return json({ status: "dispatch_accepted" });
+}
+
+
+function parseReviewDecisionIdentity(value) {
+  const applicationId = cleanString(value?.application_id, 128);
+  const vacancyVersion = cleanString(
+    value?.official_vacancy_version,
+    80,
+  );
+  const packageHash = cleanString(value?.package_hash, 80);
+  const action = cleanString(value?.action, 32);
+  return APPLICATION_ID.test(applicationId) &&
+    VACANCY_VERSION.test(vacancyVersion) &&
+    VACANCY_VERSION.test(packageHash) &&
+    REVIEW_ACTIONS.some(([candidate]) => candidate === action)
+    ? { applicationId, vacancyVersion, packageHash, action }
+    : null;
 }
 
 
@@ -1159,17 +1407,13 @@ async function acceptArtifactReviewCallback(
     );
     return json({ accepted: true });
   }
-  const status =
-    review.action === "approve_artifacts"
-      ? "approved"
-      : "regenerate_requested";
-  await store.markReviewDecided(review.reviewId, status, receivedAt);
+  await store.markReviewDispatchAccepted(review.reviewId, receivedAt);
   await store.markUpdate(callback.updateId, "dispatched");
   await answerCallback(
     fetchImpl,
     env,
     callback.callbackId,
-    status === "approved" ? "CV approvato" : "Rigenerazione avviata",
+    "Decisione inoltrata; attendo la conferma dello stato cloud",
   );
   return json({ accepted: true });
 }

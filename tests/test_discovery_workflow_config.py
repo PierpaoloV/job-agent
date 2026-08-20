@@ -259,11 +259,21 @@ def test_artifact_review_decisions_are_validated_and_persisted_before_action():
     assert "TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}" in approval
     assert "python -m actions_state write-manifest" in approval
     assert "discovery-state-artifact-approval-" in approval
+    assert approval.index("Publish authoritative artifact approval") < approval.index(
+        "Acknowledge authoritative artifact approval"
+    )
+    assert "python -m hosted_artifact_review acknowledge" in approval
 
     assert "regenerate_artifacts" in prepare
     assert prepare.index("Restore exact authoritative grading inputs") < prepare.index(
         "Record exact regeneration decision"
     )
     assert prepare.index("Record exact regeneration decision") < prepare.index(
+        "Publish authoritative regeneration decision"
+    )
+    assert prepare.index("Publish authoritative regeneration decision") < prepare.index(
+        "Acknowledge authoritative regeneration decision"
+    )
+    assert prepare.index("Acknowledge authoritative regeneration decision") < prepare.index(
         "Generate, audit, render, and encrypt CV plus cover letter"
     )

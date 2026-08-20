@@ -46,10 +46,28 @@ class MemoryStore {
         ? { ...stored }
         : null;
     }
+    if (stored.status === "documents_sent") {
+      if (
+        stored.documentMessageIds.join(",") !==
+        messageIds.documentMessageIds.join(",")
+      ) {
+        return null;
+      }
+      if (messageIds.controlMessageId === null) {
+        return { ...stored };
+      }
+      stored.controlMessageId = messageIds.controlMessageId;
+      stored.status = "pending";
+      return { ...stored };
+    }
     if (stored.status !== "authorizing") {
       return null;
     }
     stored.documentMessageIds = [...messageIds.documentMessageIds];
+    if (messageIds.controlMessageId === null) {
+      stored.status = "documents_sent";
+      return { ...stored };
+    }
     stored.controlMessageId = messageIds.controlMessageId;
     stored.status = "pending";
     return { ...stored };
@@ -89,12 +107,58 @@ class MemoryStore {
     };
   }
 
-  async markReviewDecided(reviewId, status, decidedAt) {
+  async markReviewDispatchAccepted(reviewId, acceptedAt) {
     const review = [...this.reviews.values()].find(
       (candidate) => candidate.reviewId === reviewId,
     );
-    review.status = status;
-    review.decidedAt = decidedAt;
+    review.status = "dispatch_accepted";
+    review.acceptedAt = acceptedAt;
+  }
+
+  async acknowledgeReviewDecision(reviewId, identity, acknowledgedAt) {
+    const review = [...this.reviews.values()].find(
+      (candidate) => candidate.reviewId === reviewId,
+    );
+    const expectedStatus =
+      identity.action === "approve_artifacts"
+        ? "approved"
+        : "regenerate_requested";
+    if (
+      !review ||
+      review.applicationId !== identity.applicationId ||
+      review.vacancyVersion !== identity.vacancyVersion ||
+      review.packageHash !== identity.packageHash ||
+      review.decision !== identity.action
+    ) {
+      return null;
+    }
+    if (review.status === expectedStatus) {
+      return expectedStatus;
+    }
+    if (review.status !== "dispatch_accepted") {
+      return null;
+    }
+    review.status = expectedStatus;
+    review.decidedAt = acknowledgedAt;
+    return review.status;
+  }
+
+  async claimReviewDispatchRecovery(reviewId, identity) {
+    const review = [...this.reviews.values()].find(
+      (candidate) => candidate.reviewId === reviewId,
+    );
+    if (
+      !review ||
+      review.status !== "dispatch_uncertain" ||
+      review.applicationId !== identity.applicationId ||
+      review.vacancyVersion !== identity.vacancyVersion ||
+      review.packageHash !== identity.packageHash ||
+      review.decision !== identity.action
+    ) {
+      return null;
+    }
+    review.status = "dispatch_recovering";
+    return { ...identity, ...review };
   }
 
   async markReviewCleanupUncertain(reviewId, evidence) {
@@ -117,7 +181,12 @@ class MemoryStore {
     const expired = [];
     for (const review of this.reviews.values()) {
       if (
-        ["pending", "expiring", "expiry_cleanup_uncertain"].includes(
+        [
+          "documents_sent",
+          "pending",
+          "expiring",
+          "expiry_cleanup_uncertain",
+        ].includes(
           review.status,
         ) &&
         new Date(review.expiresAt) <= new Date(observedAt)
@@ -127,7 +196,7 @@ class MemoryStore {
           reviewId: review.reviewId,
           chatId: review.chatId,
           documentMessageIds: [...review.documentMessageIds],
-          controlMessageId: review.controlMessageId,
+          controlMessageId: review.controlMessageId ?? null,
         });
       }
     }
@@ -578,6 +647,20 @@ test("artifact approval deletes protected review then dispatches exact package o
   });
   assert.equal(
     store.reviews.get("review:approved-25764671169e97eb:package-a").status,
+    "dispatch_accepted",
+  );
+  const ack = await gateway.fetch(
+    reviewDecisionAckRequest(issued.review_id, "approve_artifacts"),
+    env,
+  );
+  assert.deepEqual(await ack.json(), { status: "approved" });
+  const ackReplay = await gateway.fetch(
+    reviewDecisionAckRequest(issued.review_id, "approve_artifacts"),
+    env,
+  );
+  assert.deepEqual(await ackReplay.json(), { status: "approved" });
+  assert.equal(
+    store.reviews.get("review:approved-25764671169e97eb:package-a").status,
     "approved",
   );
   assert.equal(store.updates.get(61).status, "dispatched");
@@ -629,8 +712,13 @@ test("artifact regeneration deletes review and dispatches a fresh generation", a
   );
   assert.equal(
     store.reviews.get("review:approved-25764671169e97eb:package-a").status,
-    "regenerate_requested",
+    "dispatch_accepted",
   );
+  const ack = await gateway.fetch(
+    reviewDecisionAckRequest(issued.review_id, "regenerate_artifacts"),
+    env,
+  );
+  assert.deepEqual(await ack.json(), { status: "regenerate_requested" });
 });
 
 
@@ -697,7 +785,64 @@ test("a partial decision cleanup is reconciled before GitHub dispatch", async ()
   assert.equal(github[0].client_payload.review_id, issued.review_id);
   assert.equal(
     store.reviews.get("review:approved-25764671169e97eb:package-a").status,
-    "approved",
+    "dispatch_accepted",
+  );
+});
+
+
+test("uncertain review dispatch requires confirmed-absent operator recovery", async () => {
+  const store = new MemoryStore();
+  let sequence = 0;
+  let githubCalls = 0;
+  const gateway = createGateway({
+    storeFactory: () => store,
+    tokenFactory: () => `dispatch-token-${++sequence}`,
+    now: () => new Date("2026-08-20T10:00:00Z"),
+    fetchImpl: async (url) => {
+      if (String(url).includes("api.github.com")) {
+        githubCalls += 1;
+        if (githubCalls === 1) {
+          throw new Error("connection reset after write");
+        }
+        return new Response(null, { status: 204 });
+      }
+      return Response.json({ ok: true, result: true });
+    },
+  });
+  const issued = await (
+    await gateway.fetch(reviewAuthorizationRequest(), env)
+  ).json();
+  await gateway.fetch(
+    reviewBindRequest(issued.review_id, [741, 742], 743),
+    env,
+  );
+  const token = issued.buttons[0].callback_data.slice("jar1:".length);
+  await gateway.fetch(
+    callbackRequest({
+      updateId: 64,
+      messageId: 743,
+      token,
+      prefix: "jar1:",
+    }),
+    env,
+  );
+
+  const refused = await gateway.fetch(
+    reviewDispatchRecoveryRequest(issued.review_id, false),
+    env,
+  );
+  assert.equal(refused.status, 400);
+  assert.equal(githubCalls, 1);
+
+  const recovered = await gateway.fetch(
+    reviewDispatchRecoveryRequest(issued.review_id, true),
+    env,
+  );
+  assert.deepEqual(await recovered.json(), { status: "dispatch_accepted" });
+  assert.equal(githubCalls, 2);
+  assert.equal(
+    store.reviews.get("review:approved-25764671169e97eb:package-a").status,
+    "dispatch_accepted",
   );
 });
 
@@ -737,6 +882,50 @@ test("scheduled cleanup deletes an undecided protected review after 24 hours onc
     calls.filter(({ url }) => url.includes("api.github.com")).length,
     0,
   );
+  assert.equal(
+    store.reviews.get("review:approved-25764671169e97eb:package-a").status,
+    "expired",
+  );
+});
+
+
+test("scheduled cleanup removes PDFs even when control publication never completes", async () => {
+  const store = new MemoryStore();
+  const deleted = [];
+  let sequence = 0;
+  let current = new Date("2026-08-20T10:00:00Z");
+  const gateway = createGateway({
+    storeFactory: () => store,
+    tokenFactory: () => `orphan-token-${++sequence}`,
+    now: () => current,
+    fetchImpl: async (_url, options) => {
+      deleted.push(JSON.parse(options.body).message_id);
+      return Response.json({ ok: true, result: true });
+    },
+  });
+  const issued = await (
+    await gateway.fetch(reviewAuthorizationRequest(), env)
+  ).json();
+  const documentBind = await gateway.fetch(
+    new Request(
+      `https://gateway.test/v1/artifact-reviews/${issued.review_id}/messages`,
+      {
+        method: "POST",
+        headers: {
+          authorization: "Bearer internal-secret",
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({ document_message_ids: [731, 732] }),
+      },
+    ),
+    env,
+  );
+  assert.deepEqual(await documentBind.json(), { status: "documents_sent" });
+  current = new Date("2026-08-21T10:00:01Z");
+
+  await gateway.scheduled({}, env, {});
+
+  assert.deepEqual(deleted, [731, 732]);
   assert.equal(
     store.reviews.get("review:approved-25764671169e97eb:package-a").status,
     "expired",
@@ -1368,6 +1557,47 @@ function reviewBindRequest(reviewId, documentMessageIds, controlMessageId) {
       body: JSON.stringify({
         document_message_ids: documentMessageIds,
         control_message_id: controlMessageId,
+      }),
+    },
+  );
+}
+
+
+function reviewDecisionAckRequest(reviewId, action) {
+  return new Request(
+    `https://gateway.test/v1/artifact-reviews/${reviewId}/decision-ack`,
+    {
+      method: "POST",
+      headers: {
+        authorization: "Bearer internal-secret",
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        action,
+        application_id: "approved-25764671169e97eb",
+        official_vacancy_version: `sha256:${"a".repeat(64)}`,
+        package_hash: `sha256:${"b".repeat(64)}`,
+      }),
+    },
+  );
+}
+
+
+function reviewDispatchRecoveryRequest(reviewId, confirmedAbsent) {
+  return new Request(
+    `https://gateway.test/v1/artifact-reviews/${reviewId}/dispatch-recovery`,
+    {
+      method: "POST",
+      headers: {
+        authorization: "Bearer internal-secret",
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        confirmed_absent: confirmedAbsent,
+        action: "approve_artifacts",
+        application_id: "approved-25764671169e97eb",
+        official_vacancy_version: `sha256:${"a".repeat(64)}`,
+        package_hash: `sha256:${"b".repeat(64)}`,
       }),
     },
   );

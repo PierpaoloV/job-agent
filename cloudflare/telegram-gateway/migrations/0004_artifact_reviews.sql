@@ -9,6 +9,7 @@ CREATE TABLE artifact_reviews (
   status TEXT NOT NULL CHECK (
     status IN (
       'authorizing',
+      'documents_sent',
       'pending',
       'deciding',
       'approved',
@@ -17,6 +18,8 @@ CREATE TABLE artifact_reviews (
       'cleanup_uncertain',
       'cleanup_retrying',
       'dispatch_uncertain',
+      'dispatch_recovering',
+      'dispatch_accepted',
       'expiring',
       'expiry_cleanup_uncertain'
     )
