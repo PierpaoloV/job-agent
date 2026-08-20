@@ -54,13 +54,19 @@ _SAFE_SECTION_HEADINGS = {
     "scientific service and university governance",
     "teaching, supervision, and mentoring",
 }
+_MODEL_SECTION_HEADINGS = {
+    "education",
+    "peer-reviewed publications and proceedings",
+    "professional experience",
+    "professional profile",
+}
 _SENSITIVE_LINE = re.compile(
     r"\b(?:"
     r"api[ _-]?key|access[ _-]?token|refresh[ _-]?token|auth(?:entication)?[ _-]?token|"
     r"ats answer|application answer|bearer token|citizen|citizenship|"
     r"client[ _-]?secret|compensation|credential|"
     r"date of birth|"
-    r"demographic|diagnos\w*|disabil\w*|ethnic\w*|gender|health condition|"
+    r"demographic|diagnosis|diagnosed|disabil\w*|ethnic\w*|gender|health condition|"
     r"hobb(?:y|ies)|identity document|marital|nationality|oauth|passport|"
     r"passphrase|password|political|"
     r"private[ _-]?key|race|religio\w*|secret(?:[ _-]?key)?|social security|"
@@ -88,6 +94,11 @@ _HEADER_PROFESSION = re.compile(
 _PAGE_FOOTER = re.compile(
     r"(?:complete curriculum vitae|curriculum vitae)\s+\d+$", re.IGNORECASE
 )
+_CV_DATE_RANGE = re.compile(
+    r"\b(?:19|20)\d{2}\b.*(?:[-‐‑‒–—−]|\bto\b|\bPresent\b|\bCurrent\b).*"
+    r"(?:\b(?:19|20)\d{2}\b|\bPresent\b|\bCurrent\b)",
+    re.IGNORECASE,
+)
 
 
 class YamlEvidenceSource:
@@ -106,11 +117,15 @@ class YamlEvidenceSource:
 
         records = tuple(self._records(payload))
         with pymupdf.open(self._canonical_cv_path) as document:
-            extracted_cv_text = "\n".join(
-                (page.get_text("text", sort=True) or "").strip()
+            extracted_blocks = tuple(
+                str(block[4]).strip()
                 for page in document
-            ).strip()
-        canonical_cv_text = _professional_cv_projection(extracted_cv_text)
+                for block in page.get_text("blocks", sort=True)
+                if str(block[4]).strip()
+            )
+        canonical_cv_text = _professional_cv_projection(
+            extracted_blocks[0] if len(extracted_blocks) == 1 else extracted_blocks
+        )
         if not canonical_cv_text:
             raise ValueError("canonical CV must contain extractable text")
         return EvidenceBankSnapshot(
@@ -170,7 +185,13 @@ def _sha256(value: bytes) -> str:
     return f"sha256:{hashlib.sha256(value).hexdigest()}"
 
 
-def _professional_cv_projection(value: str) -> str:
+def _professional_cv_projection(value: str | Iterable[str]) -> str:
+    if not isinstance(value, str):
+        projected = _project_structured_blocks(tuple(value))
+        if projected:
+            return projected
+        value = "\n".join(value)
+
     projected: list[str] = []
     blocked_section = True
     kept_identity = False
@@ -201,6 +222,114 @@ def _professional_cv_projection(value: str) -> str:
                 continue
         projected.append(line)
     return "\n".join(projected).strip()
+
+
+def _project_structured_blocks(blocks: tuple[str, ...]) -> str:
+    """Allowlist only model-needed professional PDF layout blocks."""
+
+    result: list[str] = []
+    section = "header"
+    expect = ""
+    publication_phase = 0
+    pending_header: str | None = None
+    for raw_block in blocks:
+        lines = tuple(line.strip() for line in raw_block.splitlines() if line.strip())
+        if not lines:
+            continue
+        if _is_sensitive_block(lines):
+            if expect == "entry_detail":
+                pending_header = None
+                section = "blocked"
+            continue
+        first = _heading_key(lines[0])
+        if _PAGE_FOOTER.search(" ".join(lines)):
+            continue
+        if first in _SAFE_SECTION_HEADINGS or first in _BLOCKED_SECTION_HEADINGS:
+            if first in _MODEL_SECTION_HEADINGS:
+                section = first
+                expect = "entry_header" if first in {
+                    "professional experience",
+                    "education",
+                } else ""
+                publication_phase = 0
+                pending_header = None
+                result.append("\n".join(lines))
+            else:
+                section = "blocked"
+            continue
+        if section == "header":
+            safe = tuple(line for line in lines if _safe_header_projection_line(line))
+            if safe:
+                result.append("\n".join(safe))
+            continue
+        if section == "professional profile":
+            # The profile is retained only when it shares the allowlisted
+            # heading block. A later standalone block is fail-closed.
+            section = "blocked"
+            continue
+        if section in {"professional experience", "education"}:
+            if expect == "entry_header" and _entry_header_block(lines):
+                pending_header = "\n".join(lines)
+                expect = "entry_detail"
+                continue
+            if expect == "entry_detail" and _entry_detail_block(lines, section):
+                assert pending_header is not None
+                result.append(pending_header)
+                result.append("\n".join(lines))
+                pending_header = None
+                expect = "entry_header"
+                continue
+            pending_header = None
+            section = "blocked"
+            continue
+        if section == "peer-reviewed publications and proceedings":
+            if _publication_block(lines, publication_phase):
+                result.append("\n".join(lines))
+                publication_phase = (publication_phase + 1) % 3
+                continue
+            section = "blocked"
+    return "\n\n".join(result).strip()
+
+
+def _heading_key(value: str) -> str:
+    normalized = re.sub(r"[‐‑‒–—−]", "-", str(value))
+    return " ".join(normalized.casefold().split())
+
+
+def _is_sensitive_block(lines: tuple[str, ...]) -> bool:
+    return any(_SENSITIVE_LINE.search(line) or _SECRET_VALUE.search(line) for line in lines)
+
+
+def _safe_header_projection_line(line: str) -> bool:
+    if _SENSITIVE_LINE.search(line) or _SECRET_VALUE.search(line):
+        return False
+    return bool(
+        not line.strip()
+        or _HEADER_CONTACT.search(line)
+        or _HEADER_PROFESSION.search(line)
+        or (len(line.split()) <= 5 and not any(char.isdigit() for char in line))
+    )
+
+
+def _entry_header_block(lines: tuple[str, ...]) -> bool:
+    return len(lines) == 2 and bool(_CV_DATE_RANGE.search(lines[1]))
+
+
+def _entry_detail_block(lines: tuple[str, ...], section: str) -> bool:
+    if len(lines) < 2:
+        return False
+    if section == "professional experience":
+        return any(line.startswith("•") for line in lines[2:])
+    return not _CV_DATE_RANGE.search(lines[1])
+
+
+def _publication_block(lines: tuple[str, ...], phase: int) -> bool:
+    text = " ".join(lines)
+    if phase == 0:
+        return len(text.split()) >= 6 and not re.search(r"\b(?:19|20)\d{2}\b", text)
+    if phase == 1:
+        return bool(re.search(r"\b(?:19|20)\d{2}\b", text))
+    return bool(re.search(r"\b(?:doi:|pubmed|conference|first author)\b", text, re.I))
 
 
 __all__ = ["YamlEvidenceSource"]

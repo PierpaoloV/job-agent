@@ -457,7 +457,7 @@ def test_hosted_preparation_uses_authoritative_input_and_exports_one_package(
         "2022 - Present",
         "Example Institute",
         "Amsterdam",
-        "Built reproducible research systems.",
+        "• Built reproducible research systems.",
         "Education",
         "PhD in Artificial Intelligence",
         "2018 - 2022",
@@ -478,7 +478,7 @@ def test_hosted_preparation_uses_authoritative_input_and_exports_one_package(
                 version=vacancy_version,
                 fingerprint=vacancy_version,
                 freshness="2026-07-24T10:00:00+00:00",
-                description="Build reproducible computer-vision research systems.",
+                description="Research Scientist\nBuild reproducible computer-vision research systems.",
             ),
             opportunity={
                 "artifact_family": "research",
@@ -514,7 +514,7 @@ def test_hosted_preparation_uses_authoritative_input_and_exports_one_package(
                             "2022 - Present",
                             "Example Institute",
                             "Amsterdam",
-                            "Built reproducible research systems.",
+                            "• Built reproducible research systems.",
                         )
                     ),
                     "role": "Machine Learning Researcher",
@@ -545,7 +545,7 @@ def test_hosted_preparation_uses_authoritative_input_and_exports_one_package(
             ],
             "selected_evidence_ids": ["skill-python"],
             "target_requirement_ids": ["req-python"],
-            "target_role": "computer-vision research systems",
+            "target_role": "Research Scientist",
             "cover_letter_source_paragraphs": [
                 "I validate machine-learning systems against real operational requirements and independent evaluation datasets.",
             ],

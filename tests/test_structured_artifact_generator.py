@@ -87,7 +87,7 @@ def tailoring_request():
             version="vacancy-v1",
             fingerprint="sha256:vacancy",
             freshness="2026-07-24T10:00:00+00:00",
-            description="Build reproducible computer-vision research systems.",
+            description="Research Scientist\nBuild reproducible computer-vision research systems.",
         ),
         matrix=DeepGradingMatrix(
             version="job-agent.requirements-evidence.v1",
@@ -125,7 +125,7 @@ def professional_source():
             "2022 - Present",
             "Example Institute",
             "Amsterdam",
-            "Built reproducible research systems.",
+            "• Built reproducible research systems.",
             "Education",
             "PhD in Artificial Intelligence",
             "2018 - 2022",
@@ -152,7 +152,7 @@ def professional_selection(**updates):
                         "2022 - Present",
                         "Example Institute",
                         "Amsterdam",
-                        "Built reproducible research systems.",
+                        "• Built reproducible research systems.",
                     )
                 ),
                 "role": "Machine Learning Researcher",
@@ -183,7 +183,7 @@ def professional_selection(**updates):
         ],
         "selected_evidence_ids": ["python-research"],
         "target_requirement_ids": ["req-python"],
-        "target_role": "computer-vision research systems",
+        "target_role": "Research Scientist",
         "cover_letter_source_paragraphs": [
             "I validate machine-learning systems against real operational requirements and independent evaluation datasets.",
         ],
@@ -203,7 +203,7 @@ def test_generates_both_documents_and_exact_claim_traces_in_one_provider_call():
     assert len(provider.requests) == 1
     request = provider.requests[0]
     assert request["official_vacancy"]["description"] == (
-        "Build reproducible computer-vision research systems."
+        "Research Scientist\nBuild reproducible computer-vision research systems."
     )
     assert request["requirements_evidence_matrix"]["rows"][0]["evidence_ids"] == [
         "python-research"
@@ -260,7 +260,7 @@ def test_uses_one_sonnet_structured_output_request_for_the_whole_bundle():
                         "2022 - Present",
                         "Example Institute",
                         "Amsterdam",
-                        "Built reproducible research systems.",
+                            "• Built reproducible research systems.",
                     )
                 ),
                 "role": "Machine Learning Researcher",
@@ -291,7 +291,7 @@ def test_uses_one_sonnet_structured_output_request_for_the_whole_bundle():
         ],
         "selected_evidence_ids": ["python-research"],
         "target_requirement_ids": ["req-python"],
-        "target_role": "computer-vision research systems",
+        "target_role": "Research Scientist",
         "cover_letter_source_paragraphs": [
             "I validate machine-learning systems against real operational requirements and independent evaluation datasets.",
         ],
@@ -319,7 +319,7 @@ def test_uses_one_sonnet_structured_output_request_for_the_whole_bundle():
             "2022 - Present",
             "Example Institute",
             "Amsterdam",
-            "Built reproducible research systems.",
+            "• Built reproducible research systems.",
             "Education",
             "PhD in Artificial Intelligence",
             "2018 - 2022",
@@ -335,7 +335,7 @@ def test_uses_one_sonnet_structured_output_request_for_the_whole_bundle():
 
     assert generated.cv_text.startswith("# Synthetic Candidate")
     assert "Uses Python to build reproducible" in generated.cv_text
-    assert "computer-vision research systems" in generated.cover_letter_text
+    assert "Research Scientist" in generated.cover_letter_text
     assert "Python" in generated.cover_letter_text
     assert "Please accept my application" not in generated.cover_letter_text
     assert len(post.calls) == 1
@@ -407,7 +407,7 @@ def test_structured_generation_rejects_fields_mixed_across_source_roles():
             "2020 - 2022",
             "Different Institute",
             "London",
-            "Built a separate trustworthy research platform.",
+            "• Built a separate trustworthy research platform.",
         )
     )
     source = professional_source().replace(
@@ -422,12 +422,12 @@ def test_structured_generation_rejects_fields_mixed_across_source_roles():
                     "2022 - Present",
                     "Example Institute",
                     "Amsterdam",
-                    "Built reproducible research systems.",
+                    "• Built reproducible research systems.",
                     "Research Engineer",
                     "2020 - 2022",
                     "Different Institute",
                     "London",
-                    "Built a separate trustworthy research platform.",
+                    "• Built a separate trustworthy research platform.",
                 )
             ),
             "role": "Machine Learning Researcher",
@@ -452,7 +452,7 @@ def test_structured_generation_rejects_bullet_from_a_second_source_role():
             "2020 - 2022",
             "Different Institute",
             "London",
-            "Built a separate trustworthy research platform.",
+            "• Built a separate trustworthy research platform.",
         )
     )
     source = professional_source().replace(
@@ -467,7 +467,7 @@ def test_structured_generation_rejects_bullet_from_a_second_source_role():
                     "2022 - Present",
                     "Example Institute",
                     "Amsterdam",
-                    "Built reproducible research systems.",
+                    "• Built reproducible research systems.",
                     second_role,
                 )
             ),
@@ -479,7 +479,7 @@ def test_structured_generation_rejects_bullet_from_a_second_source_role():
         }
     ]
 
-    with pytest.raises(ValueError, match="exactly one entry"):
+    with pytest.raises(ValueError, match="contains another entry"):
         StructuredArtifactGenerator(
             RecordingProvider(payload),
             candidate_name="Synthetic Candidate",
@@ -503,7 +503,23 @@ def test_structured_generation_rejects_abbreviated_role_metadata_and_target():
 
     with pytest.raises(ValueError, match="target_role"):
         StructuredArtifactGenerator(
-            RecordingProvider(professional_selection(target_role="research")),
+            RecordingProvider(
+                professional_selection(target_role="Research Scientist")
+            ),
+            candidate_name="Synthetic Candidate",
+        ).generate(
+            replace(
+                tailoring_request(),
+                official_vacancy=replace(
+                    tailoring_request().official_vacancy,
+                    description="Build trustworthy research systems.",
+                ),
+            )
+        )
+
+    with pytest.raises(ValueError, match="target_role"):
+        StructuredArtifactGenerator(
+            RecordingProvider(professional_selection(target_role="research systems")),
             candidate_name="Synthetic Candidate",
         ).generate(tailoring_request())
 
@@ -673,7 +689,7 @@ def test_production_bundle_preserves_complete_master_cv_identity_and_structure(
         "2022 - Present",
         "Example Research Institute",
         "Amsterdam, The Netherlands",
-        "Built reproducible computer-vision research pipelines.",
+        "• Built reproducible computer-vision research pipelines.",
         "Education",
         "PhD in Artificial Intelligence",
         "2018 - 2022",
@@ -725,7 +741,7 @@ def test_production_bundle_preserves_complete_master_cv_identity_and_structure(
                             "2022 - Present",
                             "Example Research Institute",
                             "Amsterdam, The Netherlands",
-                            "Built reproducible computer-vision research pipelines.",
+                            "• Built reproducible computer-vision research pipelines.",
                         )
                     ),
                     "role": "Machine Learning Researcher",
@@ -758,7 +774,7 @@ def test_production_bundle_preserves_complete_master_cv_identity_and_structure(
             ],
             "selected_evidence_ids": ["python-research"],
             "target_requirement_ids": ["req-python"],
-            "target_role": "computer-vision research systems",
+            "target_role": "Research Scientist",
             "cover_letter_source_paragraphs": [
                 "I validate machine-learning systems against real operational requirements and independent evaluation datasets.",
             ],

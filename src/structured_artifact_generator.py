@@ -21,16 +21,10 @@ from application_artifacts import (
 from application_domain import ArtifactDocument, EvidenceKind
 
 
-_DATE_RANGE = re.compile(
-    r"\b(?:(?:Jan\.?|Feb\.?|Mar\.?|Apr\.?|May|Jun\.?|Jul\.?|Aug\.?|Sep\.?|"
-    r"Oct\.?|Nov\.?|Dec\.?)\s+)?(?:19|20)\d{2}\s*[-‐‑‒–—−]\s*"
-    r"(?:(?:(?:Jan\.?|Feb\.?|Mar\.?|Apr\.?|May|Jun\.?|Jul\.?|Aug\.?|"
-    r"Sep\.?|Oct\.?|Nov\.?|Dec\.?)\s+)?(?:19|20)\d{2}|Present)\b",
-    re.IGNORECASE,
-)
 _ROLE_NOUN = re.compile(
-    r"\b(?:analyst|architect|developer|director|engineer|lead|manager|researcher|"
-    r"scientist|specialist|system|systems)\b",
+    r"\b(?:analyst|architect|associate|consultant|coordinator|developer|director|"
+    r"engineer|fellow|lead|manager|officer|professor|researcher|scientist|"
+    r"specialist)\b",
     re.IGNORECASE,
 )
 
@@ -603,40 +597,38 @@ def _source_entries(
             for line in source_block.splitlines()
             if line.strip()
         )
-        if not _entry_header_matches(block_lines, parsed, header_order):
+        header_length = _entry_header_length(block_lines, parsed, header_order)
+        if header_length is None:
             raise ValueError(f"{key} source_block does not bind one source entry")
-        if list_fields and len(_DATE_RANGE.findall(source_block)) != 1:
-            raise ValueError(f"{key} source_block must contain exactly one entry")
         for name in list_fields:
-            parsed[name] = _source_values(
+            parsed[name] = _validated_entry_bullets(
                 item,
-                name,
-                source_block,
-                minimum=1,
-                maximum=4,
-                minimum_words=4,
+                name=name,
+                lines=block_lines[header_length:],
             )
+        if not list_fields and len(block_lines) != header_length:
+            raise ValueError(f"{key} source_block must contain only one entry header")
         parsed["source_block"] = source_block
         entries.append(parsed)
     return tuple(entries)
 
 
-def _entry_header_matches(
+def _entry_header_length(
     lines: tuple[str, ...],
     fields: Mapping[str, str],
     header_order: tuple[str, ...],
-) -> bool:
+) -> int | None:
     """Bind two source header pairs without allowing cross-entry field mixing."""
 
     if len(header_order) != 4:
-        return False
+        return None
     cursor = 0
     for left_name, right_name in (
         header_order[:2],
         header_order[2:],
     ):
         if cursor >= len(lines):
-            return False
+            return None
         left = normalize_cv_text(fields[left_name])
         right = normalize_cv_text(fields[right_name])
         line = normalize_cv_text(lines[cursor])
@@ -644,11 +636,50 @@ def _entry_header_matches(
             cursor += 1
             continue
         if line != left or cursor + 1 >= len(lines):
-            return False
+            return None
         if normalize_cv_text(lines[cursor + 1]) != right:
-            return False
+            return None
         cursor += 2
-    return True
+    return cursor
+
+
+def _validated_entry_bullets(
+    payload: Mapping[str, Any],
+    *,
+    name: str,
+    lines: tuple[str, ...],
+) -> tuple[str, ...]:
+    raw = payload.get(name)
+    if not isinstance(raw, list) or not 1 <= len(raw) <= 4:
+        raise ValueError(f"{name} must contain 1 to 4 items")
+    source_bullets: list[str] = []
+    current: list[str] = []
+    for line in lines:
+        if line.startswith("•"):
+            if current:
+                source_bullets.append(" ".join(current).strip())
+            current = [line.lstrip("•").strip()]
+            continue
+        if not current:
+            raise ValueError("experience source_block contains another entry")
+        if re.search(r"[.!?]$", current[-1]):
+            raise ValueError("experience source_block contains another entry")
+        current.append(line)
+    if current:
+        source_bullets.append(" ".join(current).strip())
+    if not source_bullets or any(
+        not bullet or not re.search(r"[.!?]$", bullet)
+        for bullet in source_bullets
+    ):
+        raise ValueError("experience source_block requires complete bullets")
+    selected = tuple(str(item).strip() for item in raw)
+    available = {normalize_cv_text(item): item for item in source_bullets}
+    if any(
+        len(item.split()) < 4 or normalize_cv_text(item) not in available
+        for item in selected
+    ):
+        raise ValueError(f"{name} must copy complete bullets from one source entry")
+    return selected
 
 
 def _minimum_field_words(name: str) -> int:

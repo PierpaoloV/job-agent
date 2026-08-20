@@ -10,7 +10,10 @@ REPO_ROOT = pathlib.Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO_ROOT / "src"))
 
 from application_domain import ArtifactFamily, EvidenceKind  # noqa: E402
-from yaml_evidence_source import YamlEvidenceSource  # noqa: E402
+from yaml_evidence_source import (  # noqa: E402
+    YamlEvidenceSource,
+    _professional_cv_projection,
+)
 
 
 def write_canonical_cv(path):
@@ -145,7 +148,7 @@ def test_canonical_cv_projection_excludes_sensitive_profile_lines(tmp_path):
 
     assert "Synthetic Candidate" in projected
     assert "synthetic@example.com" in projected
-    assert "Machine Learning Researcher" in projected
+    assert "Professional Experience" in projected
     assert "citizen" not in projected.casefold()
     assert "date of birth" not in projected.casefold()
     assert "top-secret" not in projected.casefold()
@@ -154,3 +157,30 @@ def test_canonical_cv_projection_excludes_sensitive_profile_lines(tmp_path):
     assert "protected veteran" not in projected.casefold()
     assert "eur 120000" not in projected.casefold()
     assert "political campaigning" not in projected.casefold()
+
+
+def test_structured_projection_drops_every_unallowlisted_layout_block():
+    projected = _professional_cv_projection(
+        (
+            "Synthetic Candidate",
+            "Applied AI Researcher",
+            "synthetic@example.com",
+            "Professional Profile\nI build and validate trustworthy machine-learning research systems.",
+            "Expected remuneration: EUR 120000",
+            "Right to work: unrestricted",
+            "Family status: married",
+            "Unrecognized Personal Section\nPrivate personal narrative",
+            "Professional Experience",
+            "Machine Learning Researcher\n2022 - Present",
+            "Example Institute\nAmsterdam\n• Built reproducible research systems.",
+        )
+    )
+
+    assert "Synthetic Candidate" in projected
+    assert "Professional Profile" in projected
+    assert "Machine Learning Researcher" in projected
+    assert "Built reproducible research systems" in projected
+    assert "remuneration" not in projected.casefold()
+    assert "right to work" not in projected.casefold()
+    assert "family status" not in projected.casefold()
+    assert "private personal narrative" not in projected.casefold()
