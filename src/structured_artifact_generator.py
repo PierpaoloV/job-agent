@@ -205,11 +205,10 @@ def _generation_request(
             "schema_version": "job-agent.artifact-generation.v1",
             "instructions": [
                 "Select a complete, ATS-friendly CV and cover letter together.",
-                "Copy every profile, contact, complete experience/education source block, publication, and cover-letter source paragraph exactly from canonical_cv_text.",
+                "Copy every profile, complete experience/education source block, publication, and cover-letter source paragraph exactly from canonical_cv_text.",
                 "Select one to three recent, relevant roles and one to three education entries.",
                 "For every role or education entry, source_block must be one contiguous canonical-CV block beginning with role/degree plus dates, then organization/institution plus location; paired fields may share a line.",
                 "For selected bullets, omit only the leading bullet glyph and copy the complete remaining bullet text from source_block.",
-                "Include an email address in contacts.",
                 "Select only approved_evidence identifiers relevant to the persisted requirements matrix.",
                 "Select one to three target requirement ids that justify the cover letter and include every selected evidence id.",
                 "Copy a non-empty target role from the official vacancy and select one to two substantial master-CV paragraphs; at least one must use I, my, or me.",
@@ -278,9 +277,7 @@ def _build_professional_documents(
         raise ValueError("artifact selection requires approved technical skill evidence")
 
     headline = _source_value(payload, "headline", source, minimum_words=2)
-    contacts = _source_values(payload, "contacts", source, minimum=1, maximum=5)
-    if not any("@" in value for value in contacts):
-        raise ValueError("professional CV requires an email contact")
+    contacts = _canonical_contacts(source)
     summary = _source_values(
         payload,
         "summary",
@@ -701,6 +698,25 @@ def _valid_target_role(value: str, vacancy: str) -> bool:
     return bool(_ROLE_NOUN.search(value))
 
 
+def _canonical_contacts(source: str) -> tuple[str, ...]:
+    """Derive display contacts from the authoritative CV, without model edits."""
+
+    found: list[str] = []
+    patterns = (
+        re.compile(r"\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b", re.I),
+        re.compile(r"\b(?:https?://)?[A-Z0-9.-]+\.(?:com|org|io|ai|net|dev)(?:/[^\s|]*)?", re.I),
+        re.compile(r"\+\d[\d ()-]{6,}\d"),
+    )
+    for pattern in patterns:
+        for match in pattern.finditer(source):
+            value = match.group(0).strip()
+            if value not in found:
+                found.append(value)
+    if not any("@" in value for value in found):
+        raise ValueError("professional CV requires an authoritative email contact")
+    return tuple(found[:5])
+
+
 __all__ = [
     "AnthropicArtifactProvider",
     "ArtifactGenerationProvider",
@@ -724,8 +740,9 @@ organization/institution plus location; paired fields may share a line. The
 selected bullet strings omit only their leading bullet glyph and otherwise
 copy the complete bullet text from that block. The
 application code, not you, assembles and audits the final prose.
-Prefer a complete one-to-two-page ATS-friendly CV with contact details, a focused
-summary, recent relevant experience, education, technical skills, and at most
+The application code supplies contact details directly from the canonical CV.
+Prefer a complete one-to-two-page ATS-friendly CV with a focused summary,
+recent relevant experience, education, technical skills, and at most
 three relevant publications. The cover letter must name the exact target role,
 ground its narrative in one to three persisted requirements, and use one to
 two substantial source paragraphs, at least one in first person. Preserve every
@@ -800,10 +817,6 @@ _ARTIFACT_SCHEMA = {
     "type": "object",
     "properties": {
         "headline": {"type": "string"},
-        "contacts": {
-            "type": "array",
-            "items": {"type": "string"},
-        },
         "summary": {
             "type": "array",
             "items": {"type": "string"},
@@ -836,7 +849,6 @@ _ARTIFACT_SCHEMA = {
     },
     "required": [
         "headline",
-        "contacts",
         "summary",
         "experience",
         "education",

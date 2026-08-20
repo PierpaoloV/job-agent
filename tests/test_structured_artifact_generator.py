@@ -405,7 +405,6 @@ def test_uses_one_sonnet_structured_output_request_for_the_whole_bundle():
     assert sent_request["canonical_cv_text"] == source
     assert kwargs["json"]["output_config"]["format"]["schema"]["required"] == [
         "headline",
-        "contacts",
         "summary",
         "experience",
         "education",
@@ -417,6 +416,18 @@ def test_uses_one_sonnet_structured_output_request_for_the_whole_bundle():
     ]
     assert kwargs["headers"]["x-api-key"] == "test-secret"
     assert kwargs["timeout"] == 120
+
+
+def test_contact_display_is_derived_from_canonical_cv_not_model_formatting():
+    generated = StructuredArtifactGenerator(
+        RecordingProvider(
+            professional_selection(contacts=["normalized-address@example.test"])
+        ),
+        candidate_name="Synthetic Candidate",
+    ).generate(tailoring_request())
+
+    assert "synthetic@example.com" in generated.cv_text
+    assert "normalized-address@example.test" not in generated.cv_text
 
 
 def test_structured_generation_rejects_identity_not_present_in_master_cv():
